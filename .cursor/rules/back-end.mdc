@@ -1,0 +1,89 @@
+---
+alwaysApply: true
+---
+
+# Back-End Architecture Rules
+
+The back-end is a FastAPI application under `/back-end/`. Follow this layered architecture strictly.
+
+## Layer Overview
+
+Request flow: **Routes → Services / Repositories → Connectors → Authentication**
+
+```
+back-end/
+├── app.py                       # Entry point, creates app via factory
+├── common/
+│   ├── authentication/          # Auth classes (workspace, account, SQL, lakebase)
+│   ├── connectors/              # Service connectors (SQL, workspace, account, lakebase, genie)
+│   ├── factories/               # App, scheduler, websocket factories
+│   ├── config.py                # Environment/config helpers
+│   └── logger.py                # Shared logger
+├── models/                      # Pydantic domain models
+├── repositories/                # Data access layer (returns models)
+├── services/                    # Business logic layer
+├── routes/v1/                   # Versioned API route handlers
+├── controllers/                 # Controller logic (if separated from routes)
+└── migrations/                  # SQL migration strings for Lakebase
+```
+
+## Authentication (`common/authentication/`)
+
+- Each auth class (`WorkspaceAuthentication`, `AccountAuthentication`, `SQLAuthentication`, `LakebaseAuthentication`) supports an optional `bearer` parameter for direct token use.
+- Fallback order: bearer → `DATABRICKS_TOKEN` → `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET`.
+- Each exposes a `.client` property after construction.
+- `LakebaseAuthentication` uses a module-level singleton with background token refresh.
+- Never instantiate auth classes directly outside of connectors.
+
+## Connectors (`common/connectors/`)
+
+- Connectors wrap authentication to talk to external services (Databricks, Lakebase, Genie).
+- Each connector imports and instantiates its corresponding auth class internally.
+- Connectors accept optional `bearer` where auth supports it.
+- No shared base class; each is self-contained.
+- Key connectors: `SQLConnector`, `WorkspaceConnector`, `AccountConnector`, `LakebaseConnector`, `GenieSpaceConnector`.
+- Async methods should use `asyncio.to_thread` for blocking SDK calls.
+
+## Repositories (`repositories/`)
+
+- Repositories abstract data access and return Pydantic models.
+- Dependencies (connectors) are injected via constructor with defaults: `def __init__(self, sql_connector=None): self.sql_connector = sql_connector or SQLConnector()`.
+- Use `Model.model_validate(row)` to convert query results to models.
+- Repositories should NOT contain business logic — only data access.
+- Lakebase connectors are optional; use a helper like `_lakebase_connector_or_none()` for graceful fallback.
+
+## Services (`services/`)
+
+- Services contain business logic and orchestrate connectors and/or repositories.
+- Services take connectors (or identifiers like space IDs) in constructors, not repositories.
+- Expose async methods for route handlers to call.
+- Keep services focused on a single domain concern.
+
+## Models (`models/`)
+
+- All domain/DTO models use Pydantic `BaseModel`.
+- Use `ConfigDict` with `populate_by_name=True` and `str_strip_whitespace=True`.
+- Use `Field(alias="...")` for database column name mappings.
+- Export shared models via `models/__init__.py`.
+
+## Factories (`common/factories/`)
+
+- `AppFactory` creates and configures the FastAPI app with lifespan management (scheduler, Lakebase, migrations).
+- `SchedulerFactory` provides `AsyncIOScheduler`.
+- `ConnectionManager` handles WebSocket connections.
+- Use singleton-style module-level exports (e.g. `app_factory`, `scheduler_factory`, `manager`).
+
+## Routes (`routes/v1/`)
+
+- All routes live under `routes/v1/` and are mounted at `/api/v1`.
+- Each route file defines an `APIRouter` with `prefix` and `tags`.
+- Route handlers instantiate services/repositories per request — no global singletons.
+- Route handlers handle validation, error mapping, and HTTP concerns.
+- Include new routers in `routes/v1/__init__.py`.
+
+## General Conventions
+
+- Use `from common.logger import log as L` for logging.
+- Use `common/config.py` helpers for environment config (`is_development`, `is_lakebase_configured`, etc.).
+- Async-first: prefer `async def` for route handlers and service methods.
+- When adding a new domain, create files in: models → repositories or services → routes (in that order).

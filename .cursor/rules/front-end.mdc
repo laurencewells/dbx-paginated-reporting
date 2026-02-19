@@ -1,0 +1,8 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+
+For the front end, we are using Vue3 Typescript compososition API  ensure vite static rendering is supported. 
+Use Bootstrap where possible for visual and responsive design
