@@ -1,0 +1,152 @@
+<div class="report-page">
+  <!-- Header -->
+  <div class="mb-5">
+    <h1 class="fw-bold text-primary">Supplier Summary Report</h1>
+    <p class="text-muted small">Aggregated supplier performance and customer insights</p>
+  </div>
+  <div class="chart-container">
+    <div class="chart-title">Sales by Supplier</div>
+    <div class="report-bar-chart" data-labels="{{#rows}}{{supplier_name}},{{/rows}}" data-values="{{#rows}}{{total_sales_amount}},{{/rows}}">
+    </div>
+  </div>
+  <div class="chart-container">
+    <div class="chart-title">Revenue by Region</div>
+  <div class="report-pie-chart" data-labels="North,South,East,West" data-values="35,25,20,20">
+</div>
+
+  </div>
+</div>
+<!-- Supplier Cards Loop - Each on own page -->
+{{#rows}}
+  <div class="report-page">
+    <!-- Enhanced Supplier Header -->
+    <div class="mb-4 pb-4 border-bottom">
+      <div class="row align-items-start">
+        <div class="col-md-8">
+          <!-- Supplier Name & ID -->
+          <div class="mb-3">
+            <h2 class="fw-bold mb-2" style="color: #0d6efd; font-size: 1.75rem;">
+              {{supplier_name}}
+            </h2>
+            <div class="d-flex gap-2 flex-wrap">
+              <span class="badge bg-dark text-white">ID: {{supplierID}}
+              </span>
+              <span class="badge bg-primary">
+                {{supplier_continent}}
+              </span>
+            </div>
+          </div>
+          <!-- Location -->
+          <div class="mt-3">
+            <p class="mb-0">
+              <span class="text-muted small fw-semibold text-uppercase">Location</span>
+            </p>
+            <p class="mb-0 fs-5 fw-semibold">
+              {{supplier_city}}
+            </p>
+          </div>
+        </div>
+        <!-- Right Column: Page Counter & Quick Stats -->
+        <div class="col-md-4">
+          <div class="text-end">
+            <p class="text-muted small mb-3">
+              <span class="badge bg-light text-dark">Supplier {{_index}} of {{_total}}
+              </span>
+            </p>
+            <!-- Quick Stats -->
+            <div class="bg-light p-3 rounded">
+              <div class="mb-2">
+                <p class="text-muted small mb-1">Transactions</p>
+                <p class="fw-bold fs-5 mb-0">
+                  {{total_transactions}}
+                </p>
+              </div>
+              <div class="border-top pt-2">
+                <p class="text-muted small mb-1">Total Sales</p>
+                <p class="fw-bold fs-5 text-success mb-0">${{total_sales_amount}}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- KPI Tiles -->
+    <div class="row g-3 mb-4">
+      <div class="col-md-6">
+        <div class="report-tile tile-primary">
+          <div class="report-tile-title">Total Transactions</div>
+          <div class="report-tile-value">
+            {{total_transactions}}
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="report-tile tile-success">
+          <div class="report-tile-title">Total Sales Amount</div>
+          <div class="report-tile-value">${{total_sales_amount}}
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Top 5 Customers Table -->
+    <h5 class="fw-semibold mb-3">Top 5 Customers</h5>
+    <table class="report-table table table-sm table-striped">
+      <thead class="table-light">
+        <tr>
+          <th>Customer Name</th>
+          <th class="text-end">Transactions</th>
+          <th class="text-end">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{#top_5_customers}}
+          <tr>
+            <td>
+              {{customer_name}}
+            </td>
+            <td class="text-end">
+              {{transactions}}
+            </td>
+            <td class="text-end">${{amount}}
+            </td>
+          </tr>
+        {{/top_5_customers}}
+      </tbody>
+    </table>
+    {{^top_5_customers}}
+    <p class="text-muted small">No customer data available</p>
+  {{/top_5_customers}}
+  <!-- Top 3 Products -->
+  <h5 class="fw-semibold mb-3">Top 3 Products</h5>
+  <div class="row">
+    {{#top_3_products}}
+      <div class="col-4">
+        <div class="card">
+          <h5 class="card-header">
+            {{product}}
+          </h5>
+          <div class="card-body">
+            <p class="card-text">With {{transactions}} at with a revenue of £{{amount}}
+            </p>
+          </div>
+        </div>
+      </div>
+    {{/top_3_products}}
+    {{^top_3_products}}
+    <p class="text-muted small">No product data available</p>
+  {{/top_3_products}}
+</div>
+<!-- Page Number Footer -->
+<div class="text-center text-muted small mt-5 pt-4 border-top">
+  <p>Page {{_index}} of {{_total}}
+  </p>
+</div>
+</div>
+{{/rows}}
+<!-- Final Footer -->
+<div class="report-page">
+  <div class="text-center text-muted small pt-4 border-top">
+    <p>Report generated automatically | Data source: gold_supplier_summary</p>
+  </div>
+</div>
