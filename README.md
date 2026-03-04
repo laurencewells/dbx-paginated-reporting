@@ -1,322 +1,295 @@
-# Paginated Reporting
+<p align="center">
+  <img src="https://img.shields.io/badge/Databricks-Native-FF3621?style=for-the-badge&logo=databricks&logoColor=white" alt="Databricks Native" />
+  <img src="https://img.shields.io/badge/Unity_Catalog-Metadata_Driven-00A1E0?style=for-the-badge" alt="Unity Catalog" />
+  <img src="https://img.shields.io/badge/Paginated_Reports-Designer+HTML-334155?style=for-the-badge" alt="Designer + HTML" />
+  <img src="https://img.shields.io/badge/AI_Assistant-Model_Serving-C97539?style=for-the-badge" alt="AI Assistant" />
+</p>
 
-A full-stack web application for creating dynamic, data-driven paginated reports backed by Databricks Unity Catalog data, with AI-assisted template building and PDF export.
+<h1 align="center">dbx-paginated-reporting</h1>
 
-## Purpose
+<p align="center">
+  <strong>Production-oriented paginated reporting platform for Databricks.</strong>
+  <br />
+  Build, validate, and export metadata-driven reports with a full-stack workflow.
+</p>
 
-This application enables users to:
-- **Browse Unity Catalog**: Discover catalogs, schemas, and tables via a drill-down interface
-- **Define Data Structures**: Select up to 3 UC tables, define PK/FK relationships, and auto-generate SQL queries with inferred nested field schemas
-- **Build HTML Templates**: Design report layouts using Mustache syntax with live preview and AI assistance
-- **Query Real Data**: Preview and export reports populated with data queried from Databricks SQL warehouses
-- **Export to PDF**: Generate professional paginated PDF reports
+<p align="center">
+  <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#platform-capabilities">Capabilities</a> &bull;
+  <a href="#architecture">Architecture</a> &bull;
+  <a href="#developer-runbook">Developer Runbook</a> &bull;
+  <a href="#api-surface">API</a> &bull;
+  <a href="#troubleshooting">Troubleshooting</a>
+</p>
 
-## Tech Stack
+---
 
-### Front-End
+## Why This Project
 
-| Technology | Purpose |
-|------------|---------|
-| **Vue 3** | Frontend framework with Composition API and `<script setup>` |
-| **TypeScript** | Type-safe development |
-| **Vite** | Fast build tool and dev server (with API proxy) |
-| **Pinia** | UI state only (active selections); no server data |
-| **TanStack Vue Query** | Server state, data fetching, caching, and mutations |
-| **Vue Router** | Client-side routing |
-| **Bootstrap 5** | Responsive UI and styling |
-| **Orval** | Auto-generated Vue Query composables from OpenAPI spec |
-| **Axios** | HTTP client (used by Orval-generated code) |
-| **Mustache.js** | Template rendering with data binding |
-| **Chart.js + vue-chartjs** | Interactive charts |
-| **html2pdf.js** | Client-side PDF generation |
+Paginated reporting pipelines usually break across too many moving pieces:
+- source discovery and metadata live in one place
+- template logic lives somewhere else
+- runtime filtering is tested manually
+- export behavior diverges from preview
 
-### Back-End
+This project consolidates those concerns into one Databricks-native product with strict metadata flow and repeatable report output.
 
-| Technology | Purpose |
-|------------|---------|
-| **FastAPI** | Python async API framework |
-| **Lakebase (PostgreSQL)** | Persistent storage for structures, templates, and conversations |
-| **Databricks SDK** | Unity Catalog discovery and workspace integration |
-| **Databricks SQL Connector** | Querying UC tables via SQL warehouse |
-| **Model Serving** | AI agent for Mustache template assistance |
-| **Pydantic** | Request/response validation and domain models |
+## Platform Capabilities
 
-## Getting Started
+| Capability | What It Enables |
+|---|---|
+| **Unity Catalog Discovery** | Browse catalogs, schemas, tables, and columns through backend APIs |
+| **Metadata Structures** | Persist report data structures and generated SQL context in Lakebase |
+| **Dual Authoring Modes** | Use `Designer` mode for metadata-led layouts, or `HTML` mode for full Mustache control |
+| **Runtime Filter Validation** | Apply parameter overrides and verify backend query behavior in preview |
+| **Deterministic Pagination** | Render report pages with consistent row chunking and print-safe styles |
+| **PDF Export** | Export full datasets as paginated print-ready output |
+| **AI Assistant** | Use Databricks Model Serving chat endpoints for guided report development |
 
-### Prerequisites
+## End-to-End Workflow
 
-- Node.js 18+, npm 9+
-- Python 3.11+
-- Databricks workspace with configured environment variables
-
-### Back-End
-
-```bash
-cd back-end
-pip install -r requirements.txt
-uvicorn app:app --reload --port 8000
-```
-
-### Front-End
-
-```bash
-cd front-end
-npm install
-npm run dev
-```
-
-By default, the front-end proxies `/api` requests to `http://localhost:8000` in development.
-
-If your backend runs on a different port (for example `8001`), set:
-
-```bash
-VITE_API_PROXY_TARGET=http://localhost:8001 npm run dev
-```
-
-### Regenerate API Client
-
-When backend routes change, regenerate the typed API client:
-
-```bash
-cd front-end
-npm run generate-all
-```
-
-If backend runs on a non-default port, pass the OpenAPI URL explicitly:
-
-```bash
-cd front-end
-OPENAPI_URL=http://127.0.0.1:8001/openapi.json npm run generate-all
+```mermaid
+flowchart LR
+    A[Discover Data<br/>Unity Catalog] --> B[Build Structure<br/>Fields + SQL metadata]
+    B --> C[Author Template<br/>Designer or HTML]
+    C --> D[Preview Runtime<br/>Parameters + Filters]
+    D --> E[Export PDF<br/>Paginated output]
+    C --> F[AI Assistant<br/>Model Serving]
+    F --> C
 ```
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    subgraph UI[Frontend - Vue 3]
+      V1[Data Structures]
+      V2[Template Editor]
+      V3[Preview and Export]
+      V4[Agent Chat Panel]
+    end
+
+    subgraph API[Backend - FastAPI]
+      R1[/routes/v1/discovery/]
+      R2[/routes/v1/structures/]
+      R3[/routes/v1/templates/]
+      R4[/routes/v1/agent/]
+      S1[discovery service]
+      S2[query builder service]
+      S3[data query service]
+      S4[agent service]
+      Repo1[(structures repository)]
+      Repo2[(templates repository)]
+    end
+
+    subgraph DBX[Databricks]
+      UC[Unity Catalog]
+      SQLW[SQL Warehouse]
+      MS[Model Serving Endpoint]
+    end
+
+    subgraph State[Lakebase PostgreSQL]
+      LB[(App Metadata State)]
+    end
+
+    UI --> API
+    R1 --> S1 --> UC
+    R2 --> S2 --> UC
+    R3 --> S3 --> SQLW
+    R4 --> S4 --> MS
+    Repo1 --> LB
+    Repo2 --> LB
+    R2 --> Repo1
+    R3 --> Repo2
 ```
-back-end/
-├── app.py                       # FastAPI entry point
-├── common/
-│   ├── authentication/          # Databricks auth (workspace, account, SQL, lakebase)
-│   ├── connectors/              # Service connectors (SQL, workspace, lakebase, model serving)
-│   ├── factories/               # App, scheduler, lakebase factories
-│   ├── config.py                # Environment configuration
-│   └── logger.py                # Shared logger
-├── migrations/                  # SQL table definitions, upgrades, and seed data
-├── models/                      # Pydantic domain models
-│   ├── structure.py             # Structure, StructureTable, StructureRelationship, StructureField
-│   └── template.py              # Template (HTML-only, no sql_query)
-├── repositories/                # Data access layer (Lakebase)
-│   ├── structures.py
-│   └── templates.py
-├── services/
-│   ├── agent.py                 # AI chat via Model Serving
-│   ├── data_query.py            # Query UC tables for report data (uses structure.sql_query)
-│   ├── discovery.py             # Unity Catalog browsing
-│   ├── query_builder.py         # Auto-generate SQL from tables + relationships, infer fields
-│   └── prompt_builder.py        # Context-aware agent prompt generation
-└── routes/v1/
-    ├── structures.py            # CRUD /structures + POST /structures/{id}/build
-    ├── templates.py             # CRUD /templates + preview-data/report-data
-    ├── discovery.py             # GET /discovery/catalogs/.../tables/.../columns
-    └── agent.py                 # POST /agent/chat, WS /agent/ws
-
-front-end/
-├── src/
-│   ├── api/
-│   │   ├── axios-instance.ts    # Axios config for API calls
-│   │   └── generated/           # Orval-generated Vue Query composables + models
-│   ├── stores/
-│   │   ├── dataStructures.ts    # UI state only (activeStructureId)
-│   │   └── templates.ts         # UI state only (activeTemplateId)
-│   └── views/
-│       ├── DiscoveryView.vue    # UC catalog/schema/table browser
-│       ├── DataStructuresView.vue
-│       ├── TemplateEditorView.vue
-│       └── PreviewView.vue
-├── orval.config.ts              # Orval API generation config
-└── vite.config.ts               # Vite with API proxy
-```
-
-## How to Use the App
-
-The app has four main sections accessible from the sidebar: **Home**, **Data Structures**, **Template Editor**, and **Preview**.
-
-### Step 1 — Define a Data Structure
-
-Navigate to **Data Structures** and click **New Structure**.
-
-1. Give your structure a name.
-2. Browse the Unity Catalog tree (Catalog → Schema → Table) and select the table(s) you want to report on — up to 3 tables in a linear chain.
-3. Define PK/FK relationships between tables if using more than one.
-4. Click **Save & Build** — the app auto-generates a SQL query and infers a nested field schema from the selected columns and their types (including `ARRAY` and `STRUCT` fields).
-
-The inferred fields determine the Mustache variables available in your templates.
-
-### Step 2 — Build a Template
-
-Navigate to **Template Editor** and click the **+** button to create a new template, linking it to the structure you just built.
-
-The editor has two panels:
-
-- **Left** — a CodeMirror HTML editor where you write Mustache-flavoured HTML
-- **Right** — a live preview rendered against your structure's schema
-
-Useful tools in the editor:
-
-| Tool | What it does |
-|------|-------------|
-| **Insert Component** | Drop in pre-built snippets: tiles, tables, bar/pie charts, page breaks, status badges, and paginated sections |
-| **Data Structure Hint** | Shows the inferred field names and types available in `{{mustache}}` syntax |
-| **Mustache Help** | Quick reference for `{{field}}`, `{{#section}}`, `{{^inverted}}`, and dot notation |
-| **Format HTML** | Auto-formats your markup |
-| **AI Assistant** | Context-aware chat panel — aware of your structure, fields, and template — to help write or debug Mustache |
-
-Templates auto-save as you type. Use **Save** to save manually, or **Delete** to remove a template.
-
-#### Mustache basics
-
-```html
-<!-- Scalar field -->
-<p>{{customer_name}}</p>
-
-<!-- Loop over a nested array -->
-{{#orders}}
-  <p>{{order_id}} — {{total}}</p>
-{{/orders}}
-
-<!-- Conditional visibility -->
-{{#is_overdue}}<span class="badge bg-danger">Overdue</span>{{/is_overdue}}
-```
-
-Use `.report-page` divs and `<!-- PAGE BREAK -->` comments (available in the Insert Component palette) to control pagination.
-
-### Step 3 — Preview & Export
-
-Navigate to **Preview** and select your template from the dropdown. The app fetches real data from your Databricks SQL warehouse, renders it through the template, and displays the paginated result.
-
-Use **Page Setup** controls to adjust:
-- paper size (A4/Letter)
-- orientation (portrait/landscape)
-- print margin (mm)
-- density (compact/comfortable)
-- deterministic row pagination (`Paginate rows` + `rows per page`)
-
-Click **Export / Print PDF** to open the browser print dialog. Print media styles hide the toolbar so only the report content is printed. Configure your browser to print to PDF for a clean output.
-
-### Reference: the Guide
-
-The **Guide** page (accessible from the sidebar) contains a full reference for:
-
-- Mustache syntax patterns
-- Flat tables, struct fields, and arrays of structs
-- Building bar and pie charts from Unity Catalog data
-- Conditional styling using SQL-derived boolean columns
 
 ---
 
-## Key Workflows
+## Quick Start
 
-1. **Discover data** -- Browse Unity Catalog to find tables
-2. **Define structure** -- Select up to 3 tables, define PK/FK relationships (linear chain), and build to auto-generate SQL and infer nested fields
-3. **Create template** -- Write Mustache HTML, use AI agent for help
-4. **Preview** -- Fetches limited real data from the structure's auto-generated query
-5. **Export** -- Fetches full dataset and renders paginated PDF
+### Prerequisites
 
-## Data Structure Design
+- Python `3.11+`
+- Node.js `18+`
+- npm `9+`
+- Databricks workspace access
+- configured SQL warehouse and Lakebase credentials
 
-### How fields are inferred
+### 1) Backend
 
-When you click **Save & Build**, the app fetches column metadata from Unity Catalog for every selected column and maps each `type_text` string recursively to a `StructureField` tree:
-
-| UC type | Inferred field type | Mustache behaviour |
-|---------|--------------------|--------------------|
-| `STRING`, `VARCHAR`, … | `string` | `{{field}}` |
-| `INT`, `BIGINT`, `DOUBLE`, … | `number` | `{{field}}` |
-| `BOOLEAN` | `boolean` | `{{#field}}…{{/field}}` |
-| `DATE`, `TIMESTAMP` | `date` | `{{field}}` |
-| `STRUCT<a:string, b:int>` | `object` with children | `{{field.a}}` / push context with `{{#field}}` |
-| `ARRAY<STRUCT<…>>` | `array` with children | `{{#field}}…{{/field}}` iterates items |
-| `ARRAY<scalar>` | `array` (no children) | treated as a plain value |
-| `MAP<…>` | `object` (no children) | treated as a plain value |
-
-### The `rows` wrapper and the array assumption
-
-Every query result is wrapped in a top-level `rows` array before being passed to Mustache:
-
-```json
-{
-  "rows": [
-    { "customer_id": 1, "name": "Alice", "_index": 1, "_total": 3 },
-    { "customer_id": 2, "name": "Bob",   "_index": 2, "_total": 3 },
-    { "customer_id": 3, "name": "Carol", "_index": 3, "_total": 3 }
-  ]
-}
+```bash
+cd back-end
+pip install -r requirements.txt
+uvicorn app:app --reload --port 8012
 ```
 
-This means **every template must open with `{{#rows}}`** and close with `{{/rows}}`:
+### 2) Frontend
 
-```html
-{{#rows}}
-  <p>{{name}}</p>
-{{/rows}}
+```bash
+cd front-end
+npm install
+VITE_API_PROXY_TARGET=http://127.0.0.1:8012 npm run dev -- --port 5180
 ```
 
-Two special fields are injected into every row automatically:
+### 3) Open App
 
-| Field | Value |
-|-------|-------|
-| `{{_index}}` | 1-based position of this row |
-| `{{_total}}` | total number of rows returned |
+- [http://localhost:5180](http://localhost:5180)
 
-### Nested columns (STRUCT and ARRAY\<STRUCT\>)
+---
 
-`ARRAY<STRUCT<…>>` columns are returned as native Python lists by the Databricks Arrow deserialiser — no additional mapping is needed. They appear as nested arrays inside each row and can be iterated directly:
+## Environment Configuration
 
-```html
-{{#rows}}
-  <h2>{{order_id}}</h2>
-  <!-- line_items is ARRAY<STRUCT<product:string, qty:int>> -->
-  {{#line_items}}
-    <p>{{product}} × {{qty}}</p>
-  {{/line_items}}
-{{/rows}}
+Backend values are defined in `back-end/.env` (see `back-end/.env.example`).
+
+| Variable | Purpose |
+|---|---|
+| `DATABRICKS_HOST` | Workspace host |
+| `DATABRICKS_TOKEN` | Personal access token (or OAuth path) |
+| `DATABRICKS_WAREHOUSE_ID` | SQL warehouse ID (preferred) |
+| `DATABRICKS_WAREHOUSE_PATH` | SQL warehouse HTTP path fallback |
+| `LAKEBASE_INSTANCE_NAME` | Lakebase instance identifier |
+| `LAKEBASE_DATABASE_NAME` | Lakebase database name |
+| `MODEL_SERVING_ENDPOINT` | Model endpoint for AI assistant |
+
+Default model endpoint fallback in code:
+- `databricks-claude-sonnet-4-6`
+
+---
+
+## Product Areas
+
+### Data Structures
+- define source table context
+- infer field metadata from source columns
+- build SQL query metadata used by preview and export
+
+### Template Editor
+- `Designer` mode for business-friendly layout control
+- `HTML` mode for advanced Mustache customization
+- autosave behavior with template-switch guards
+
+### Preview and Export
+- runtime parameter override panel
+- backend query filter, sort, group controls
+- query/debug trace visibility
+- full export fetch with paginated render
+
+### AI Assistant
+- `POST /api/v1/agent/chat`
+- `WS /api/v1/agent/ws`
+- optional template-aware prompt injection
+
+---
+
+## API Surface
+
+| Domain | Endpoint |
+|---|---|
+| Structures | `GET /api/v1/structures/` |
+| Structures | `POST /api/v1/structures/` |
+| Structures | `PUT /api/v1/structures/{structure_id}` |
+| Structures | `POST /api/v1/structures/{structure_id}/build` |
+| Templates | `GET /api/v1/templates/` |
+| Templates | `POST /api/v1/templates/` |
+| Templates | `PUT /api/v1/templates/{template_id}` |
+| Templates | `POST /api/v1/templates/{template_id}/preview-data` |
+| Templates | `POST /api/v1/templates/{template_id}/parameter-options` |
+| Agent | `POST /api/v1/agent/chat` |
+| Agent | `WS /api/v1/agent/ws` |
+
+---
+
+## Developer Runbook
+
+### Frontend Commands
+
+```bash
+cd front-end
+npm run dev
+npm run type-check
+npm run lint
+npm run build
+npm run generate-all
 ```
 
-`STRUCT` columns are returned as dicts. Use dot notation or a context-push to access sub-fields:
+### Backend Notes
 
-```html
-{{customer.first_name}}        {{! dot notation }}
+- API app entrypoint: `back-end/app.py`
+- route modules: `back-end/routes/v1/*`
+- service layer: `back-end/services/*`
+- persistence layer: `back-end/repositories/*`
+- seed + migrations: `back-end/migrations/__init__.py`
 
-{{#customer}}                  {{! context push }}
-  {{first_name}} {{last_name}}
-{{/customer}}
+### OpenAPI Regeneration
+
+If backend contracts change:
+
+```bash
+cd front-end
+OPENAPI_URL=http://127.0.0.1:8012/openapi.json npm run generate-all
 ```
 
-### Type mapping summary
+---
 
+## Repository Structure
+
+```text
+dbx-paginated-reporting/
+├── back-end/
+│   ├── app.py
+│   ├── common/
+│   │   ├── config.py
+│   │   ├── connectors/
+│   │   └── factories/
+│   ├── migrations/
+│   ├── models/
+│   ├── repositories/
+│   ├── routes/v1/
+│   ├── services/
+│   └── static/
+├── front-end/
+│   ├── src/
+│   │   ├── api/
+│   │   ├── components/
+│   │   ├── stores/
+│   │   ├── utils/
+│   │   └── views/
+│   ├── vite.config.ts
+│   └── orval.config.ts
+└── examples/
+    ├── general_ledger_all_features_template.html
+    └── general_ledger_ssrs_demo_template.html
 ```
-UC column                          → StructureField
-─────────────────────────────────────────────────────────────────────
-order_id         INT               → { name: "order_id",   type: "number" }
-status           STRING            → { name: "status",     type: "string" }
-placed_at        TIMESTAMP         → { name: "placed_at",  type: "date"   }
-address          STRUCT<street:    → { name: "address",    type: "object",
-                   string,              children: [
-                   city:string>            { name: "street", type: "string" },
-                                          { name: "city",   type: "string" }
-                                        ]
-                                   }
-line_items       ARRAY<STRUCT<     → { name: "line_items", type: "array",
-                   product:string,      children: [
-                   qty:int>>               { name: "product", type: "string" },
-                                          { name: "qty",     type: "number" }
-                                        ]
-                                   }
-```
 
-Structures own the data definition:
-- **Tables**: Up to 3 UC tables selected via discovery (linear chain only)
-- **Relationships**: PK/FK 1-to-many links between tables (A → B → C)
-- **SQL Query**: Auto-generated from tables + relationships (not user-editable)
-- **Fields**: Auto-inferred from UC column metadata, nested based on relationships
+---
 
-Templates are pure HTML -- they reference a structure and render its data using Mustache syntax.
+## Reliability and Guardrails
+
+Implemented safeguards:
+- template UUID identity model
+- guarded autosave snapshot logic
+- stale async save suppression during template switching
+
+Recommended next hardening:
+- optimistic locking (`updated_at` or `version`) for concurrent editors
+
+---
+
+## Troubleshooting
+
+### Frontend opens but API calls fail
+- verify backend is running on expected port
+- verify `VITE_API_PROXY_TARGET` value
+
+### Preview returns no rows
+- verify structure query and selected columns
+- verify runtime filter values and debug output
+
+### `localhost` and `127.0.0.1` mismatch
+- use the exact host/port shown by Vite startup logs
+
+---
+
+<p align="center">
+  Built for enterprise-grade Databricks reporting workflows.
+</p>
