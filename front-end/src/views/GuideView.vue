@@ -5,11 +5,14 @@ const activeSection = ref('mustache')
 
 const sections = [
   { id: 'mustache',          label: 'Mustache Syntax',    icon: 'bi-braces' },
+  { id: 'editor-modes',      label: 'Editor Modes',       icon: 'bi-window-split' },
+  { id: 'runtime-preview',   label: 'Runtime Preview',    icon: 'bi-sliders' },
   { id: 'flat-table',        label: 'Flat Table',          icon: 'bi-table' },
   { id: 'struct',            label: 'Struct Fields',       icon: 'bi-braces-asterisk' },
   { id: 'array-struct',      label: 'Array of Structs',    icon: 'bi-list-nested' },
   { id: 'chart-struct',      label: 'Charts from Structs', icon: 'bi-bar-chart' },
   { id: 'conditional-styles',label: 'Conditional Styles',  icon: 'bi-palette' },
+  { id: 'reliability',       label: 'Reliability Notes',   icon: 'bi-shield-check' },
 ]
 
 // ── Inline syntax tags ────────────────────────────────────────────────────────
@@ -356,17 +359,58 @@ FROM procurement.suppliers`,
   </div>
 </div>
 {{/rows}}`,
+
+  runtime_preview_request: `POST /api/v1/templates/{template_id}/preview-data
+{
+  "limit": 50,
+  "offset": 0,
+  "filters": [
+    { "field": "department", "operator": "equals", "value": "2-HIGH" },
+    { "field": "debit_amount", "operator": "gte", "value": 0 }
+  ],
+  "group_by": "department",
+  "sorts": [
+    { "field": "txn_date", "direction": "desc" }
+  ]
+}`,
+
+  runtime_preview_response: `{
+  "data": { "rows": [ ... ] },
+  "executed_query": "SELECT * FROM (...) _q WHERE ... ORDER BY ... LIMIT 50",
+  "filter_debug": {
+    "where_clause": "...",
+    "order_by_clause": "...",
+    "applied_filters": [ ... ],
+    "applied_sorts": [ ... ],
+    "limit": 50,
+    "offset": 0
+  },
+  "row_count": 50
+}`,
+
+  runtime_export_pattern: `// export flow (frontend)
+offset = 0
+while (offset < MAX_EXPORT_ROWS):
+  chunk = preview-data(limit=5000, offset=offset)
+  append(chunk.rows)
+  if chunk.rows.length < 5000: break
+  offset += chunk.rows.length`,
+
+  optimistic_locking_pattern: `-- recommended enterprise hardening
+UPDATE templates
+SET html_content = :html, updated_at = NOW()
+WHERE id = :id AND updated_at = :last_seen_updated_at;`,
 }
 </script>
 
 <template>
   <div class="guide-view">
     <div class="guide-header mb-4">
-      <h2 class="mb-1">
-        <i class="bi bi-book text-primary me-2"></i>
+      <h2 class="mb-1 guide-page-title">
+        <i class="bi bi-book ep-icon"></i>
         Template Guide
       </h2>
-      <p class="text-muted mb-0">
+      <p class="guide-page-subtitle">
         How to structure your data and write Mustache templates for reports
       </p>
     </div>
@@ -374,144 +418,261 @@ FROM procurement.suppliers`,
     <div class="row g-4">
       <!-- Nav -->
       <div class="col-md-3">
-        <div class="card sticky-top" style="top: calc(var(--pr-navbar-height) + 1rem)">
-          <div class="card-body p-2">
-            <button
-              v-for="s in sections"
-              :key="s.id"
-              class="guide-nav-btn"
-              :class="{ active: activeSection === s.id }"
-              @click="activeSection = s.id"
-            >
-              <i :class="['bi', s.icon, 'me-2']"></i>
-              {{ s.label }}
-            </button>
-          </div>
+        <div class="ep-nav-menu sticky-top" style="top: calc(var(--pr-navbar-height) + 1.5rem)">
+          <button
+            v-for="s in sections"
+            :key="s.id"
+            class="ep-nav-item"
+            :class="{ active: activeSection === s.id }"
+            @click="activeSection = s.id"
+          >
+            <i :class="['bi', s.icon, 'me-2']"></i>
+            {{ s.label }}
+          </button>
         </div>
       </div>
 
       <!-- Content -->
-      <div class="col-md-9">
+      <div class="col-md-9 pb-5">
 
         <!-- ── Mustache Syntax ── -->
-        <div v-if="activeSection === 'mustache'">
-          <h4 class="section-title"><i class="bi bi-braces me-2 text-primary"></i>Mustache Syntax Reference</h4>
-          <p class="text-muted">Mustache is a logic-less templating language. All data comes from the <code>rows</code> array returned by your SQL query.</p>
+        <div v-if="activeSection === 'mustache'" class="guide-section">
+          <h4 class="section-title"><i class="bi bi-braces me-2"></i>Mustache Syntax Reference</h4>
+          <p class="section-desc">Mustache is a logic-less templating language. All data comes from the <code class="ep-inline-code">rows</code> array returned by your SQL query.</p>
 
-          <div class="card mb-4">
-            <div class="card-body p-0">
-              <table class="table table-sm mb-0">
-                <thead class="table-dark">
+          <div class="ep-panel mb-4">
+            <div class="ep-panel-body p-0">
+              <table class="ep-table no-hover mb-0">
+                <thead>
                   <tr><th>Syntax</th><th>Purpose</th><th>Example</th></tr>
                 </thead>
                 <tbody>
                   <tr>
                     <td><code class="syntax-tag">{{ t.variable }}</code></td>
-                    <td>Render a value (HTML-escaped)</td>
-                    <td><code>{{ t.ex_field }}</code></td>
+                    <td>Render a value (escaped)</td>
+                    <td><code class="ep-inline-code">{{ t.ex_field }}</code></td>
                   </tr>
                   <tr>
                     <td><code class="syntax-tag">{{ t.triple }}</code></td>
-                    <td>Render raw HTML (unescaped)</td>
-                    <td><code>{{ t.triple }}</code></td>
+                    <td>Render raw HTML</td>
+                    <td><code class="ep-inline-code">{{ t.triple }}</code></td>
                   </tr>
                   <tr>
                     <td><code class="syntax-tag">{{ t.section }}</code></td>
-                    <td>Iterate array <strong>or</strong> render if truthy</td>
-                    <td><code>{{ t.rows_open }}...{{ t.rows_close }}</code></td>
+                    <td>Iterate array <strong>or</strong> if truthy</td>
+                    <td><code class="ep-inline-code">{{ t.rows_open }}...{{ t.rows_close }}</code></td>
                   </tr>
                   <tr>
                     <td><code class="syntax-tag">{{ t.inverted }}</code></td>
                     <td>Render if falsy or empty</td>
-                    <td><code>{{ t.delete_check }}</code></td>
+                    <td><code class="ep-inline-code">{{ t.delete_check }}</code></td>
                   </tr>
                   <tr>
                     <td><code class="syntax-tag">{{ t.dot }}</code></td>
-                    <td>Current item in a <em>scalar</em> list only</td>
-                    <td><code>{{ t.ex_dot_loop }}</code> (tags is <code>["a","b"]</code>)</td>
+                    <td>Current item (scalar list)</td>
+                    <td><code class="ep-inline-code">{{ t.ex_dot_loop }}</code></td>
                   </tr>
                   <tr>
                     <td><code class="syntax-tag">{{ t.comment }}</code></td>
                     <td>Comment — not rendered</td>
-                    <td><code>{{ t.ex_comment }}</code></td>
+                    <td><code class="ep-inline-code">{{ t.ex_comment }}</code></td>
                   </tr>
                 </tbody>
               </table>
             </div>
           </div>
 
-          <div class="alert alert-warning">
-            <i class="bi bi-exclamation-triangle-fill me-2"></i>
-            <strong>Closing tags must always match the opening name exactly.</strong>
-            <code class="ms-1">{{ t.rows_open }}</code> closes with <code>{{ t.rows_close }}</code> — never <code>{{ t.rows_wrong }}</code>.
+          <div class="ep-alert alert-warning">
+            <i class="bi bi-exclamation-triangle-fill alert-icon"></i>
+            <div class="alert-content">
+              <strong>Closing tags must always match the opening name exactly.</strong>
+              <code>{{ t.rows_open }}</code> closes with <code>{{ t.rows_close }}</code> — never <code>{{ t.rows_wrong }}</code>.
+            </div>
           </div>
 
-          <div class="card">
-            <div class="card-header"><i class="bi bi-lightbulb me-2 text-warning"></i>Key rule — your data is always <code>rows</code></div>
-            <div class="card-body">
-              <p class="mb-2">Every query returns a single top-level key <code>rows</code>, which is a list of objects:</p>
-              <pre class="code-block">{{ code.dataShape }}</pre>
-              <p class="mb-0 small text-muted mt-2">Each row also receives <code>{{ t.index }}</code> (1-based position) and <code>{{ t.total }}</code> (total row count) automatically.</p>
+          <div class="ep-panel">
+            <div class="ep-panel-header">
+              <h5 class="ep-panel-title"><i class="bi bi-lightbulb me-2 text-warning"></i>Key rule — your data is always <code>rows</code></h5>
+            </div>
+            <div class="ep-panel-body">
+              <p class="mb-3 text-sm text-secondary">Every query returns a single top-level key <code class="ep-inline-code">rows</code>, which is a list of objects:</p>
+              <div class="ep-code-window">
+                <div class="ep-code-header">
+                  <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+                  <span class="file-name">JSON Data Shape</span>
+                </div>
+                <pre class="code-block">{{ code.dataShape }}</pre>
+              </div>
+              <p class="mb-0 text-xs text-tertiary mt-3">Each row also receives <code class="ep-inline-code">{{ t.index }}</code> (1-based position) and <code class="ep-inline-code">{{ t.total }}</code> (total row count) automatically.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Editor Modes ── -->
+        <div v-if="activeSection === 'editor-modes'" class="guide-section">
+          <h4 class="section-title"><i class="bi bi-window-split me-2"></i>Editor Modes</h4>
+          <p class="section-desc">Template Editor supports both metadata-first and advanced code-first authoring. Use the right mode for the report lifecycle stage.</p>
+
+          <div class="pattern-card mb-4">
+            <div class="pattern-header highlight-primary">Designer Mode</div>
+            <div class="pattern-body">
+              <ul class="ep-list mb-3">
+                <li>Best for business-first layout editing and parameter modeling.</li>
+                <li>Backed by designer metadata (<code class="ep-inline-code">definition_json</code> / embedded designer meta block).</li>
+                <li>Supports column management, totals, group-by, sort rules, and parameter declarations.</li>
+              </ul>
+              <div class="ep-alert alert-info mb-0">
+                <i class="bi bi-info-circle alert-icon"></i>
+                <div class="alert-content">If designer metadata exists, the template opens in Designer mode by default.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pattern-card mb-4">
+            <div class="pattern-header highlight-secondary">HTML Advanced Mode</div>
+            <div class="pattern-body">
+              <ul class="ep-list mb-3">
+                <li>Best for pixel-perfect control and complex Mustache logic.</li>
+                <li>Allows direct editing of HTML/CSS with full Mustache sections.</li>
+                <li>Recommended for SSRS-like custom styling and print tuning.</li>
+              </ul>
+              <div class="ep-alert alert-success mb-0">
+                <i class="bi bi-check-circle-fill alert-icon"></i>
+                <div class="alert-content">Non-designer templates open in HTML mode automatically to avoid generic fallback layout rendering.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pattern-card">
+            <div class="pattern-header highlight-tertiary">Autosave and Safety Behavior</div>
+            <div class="pattern-body">
+              <ul class="ep-list mb-0">
+                <li>Autosave is debounced and tied to the active template snapshot.</li>
+                <li>When switching templates, stale pending saves are discarded.</li>
+                <li>This prevents cross-template content overwrite during fast navigation.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Runtime Preview ── -->
+        <div v-if="activeSection === 'runtime-preview'" class="guide-section">
+          <h4 class="section-title"><i class="bi bi-sliders me-2"></i>Runtime Preview and Filter Pipeline</h4>
+          <p class="section-desc">Preview applies runtime parameter values to backend query filters, then renders real Databricks data with debug trace visibility.</p>
+
+          <div class="pattern-step">
+            <div class="step-label">Preview Request Payload</div>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="file-name">POST HTTP</span></div>
+              <pre class="code-block">{{ code.runtime_preview_request }}</pre>
+            </div>
+          </div>
+
+          <div class="pattern-step">
+            <div class="step-label">Preview Response and Debug Trace</div>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="file-name">Response JSON</span></div>
+              <pre class="code-block">{{ code.runtime_preview_response }}</pre>
+            </div>
+          </div>
+
+          <div class="ep-alert alert-info mb-4">
+            <i class="bi bi-info-circle alert-icon"></i>
+            <div class="alert-content">
+              <strong>Debug panel values come directly from backend query planning:</strong>
+              <code class="ep-inline-code">where_clause</code>, <code class="ep-inline-code">order_by_clause</code>, and executed SQL are exposed for fast validation.
+            </div>
+          </div>
+
+          <div class="pattern-card">
+            <div class="pattern-header highlight-secondary">Export (Full Dataset) Strategy</div>
+            <div class="pattern-body">
+              <p class="text-xs text-secondary mb-3">Export fetches data in chunks (limit + offset) instead of relying on preview-sized batches.</p>
+              <div class="ep-code-window">
+                <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+                <pre class="code-block">{{ code.runtime_export_pattern }}</pre>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- ── Flat Table ── -->
-        <div v-if="activeSection === 'flat-table'">
-          <h4 class="section-title"><i class="bi bi-table me-2 text-primary"></i>Flat Table Report</h4>
-          <p class="text-muted">The most common pattern — scalar columns from a Unity Catalog table rendered as a report table.</p>
+        <div v-if="activeSection === 'flat-table'" class="guide-section">
+          <h4 class="section-title"><i class="bi bi-table me-2"></i>Flat Table Report</h4>
+          <p class="section-desc">The most common pattern — scalar columns from a Unity Catalog table rendered as a report table.</p>
 
           <div class="pattern-step">
             <div class="step-label">1 · Unity Catalog Table</div>
-            <pre class="code-block">{{ code.flatTable_sql }}</pre>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="file-name">SQL Schema</span></div>
+              <pre class="code-block">{{ code.flatTable_sql }}</pre>
+            </div>
           </div>
 
           <div class="pattern-step">
             <div class="step-label">2 · Data Shape delivered to template</div>
-            <pre class="code-block">{{ code.flatTable_data }}</pre>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="file-name">JSON Data</span></div>
+              <pre class="code-block">{{ code.flatTable_data }}</pre>
+            </div>
           </div>
 
           <div class="pattern-step">
             <div class="step-label">3 · Mustache Template</div>
-            <pre class="code-block">{{ code.flatTable_template }}</pre>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="file-name">HTML</span></div>
+              <pre class="code-block">{{ code.flatTable_template }}</pre>
+            </div>
           </div>
 
-          <div class="alert alert-info">
-            <i class="bi bi-info-circle me-2"></i>
-            <strong>Null / empty check:</strong> use <code>{{ t.inverted }}</code> to render content when a field is null, false, or empty — no logic needed.
+          <div class="ep-alert alert-info">
+            <i class="bi bi-info-circle alert-icon"></i>
+            <div class="alert-content">
+              <strong>Null / empty check:</strong> use <code class="ep-inline-code">{{ t.inverted }}</code> to render content when a field is null, false, or empty.
+            </div>
           </div>
         </div>
 
         <!-- ── Struct Fields ── -->
-        <div v-if="activeSection === 'struct'">
-          <h4 class="section-title"><i class="bi bi-braces-asterisk me-2 text-primary"></i>Struct Fields</h4>
-          <p class="text-muted">When a column is <code>STRUCT&lt;...&gt;</code>, Mustache can push it as a context or access it with dot notation.</p>
+        <div v-if="activeSection === 'struct'" class="guide-section">
+          <h4 class="section-title"><i class="bi bi-braces-asterisk me-2"></i>Struct Fields</h4>
+          <p class="section-desc">When a column is <code class="ep-inline-code">STRUCT&lt;...&gt;</code>, Mustache can push it as a context or access it with dot notation.</p>
 
           <div class="pattern-step">
             <div class="step-label">1 · Unity Catalog Table with a STRUCT column</div>
-            <pre class="code-block">{{ code.struct_sql }}</pre>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="file-name">SQL</span></div>
+              <pre class="code-block">{{ code.struct_sql }}</pre>
+            </div>
           </div>
 
           <div class="pattern-step">
             <div class="step-label">2 · Data Shape</div>
-            <pre class="code-block">{{ code.struct_data }}</pre>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="file-name">JSON</span></div>
+              <pre class="code-block">{{ code.struct_data }}</pre>
+            </div>
           </div>
 
           <div class="pattern-step">
             <div class="step-label">3 · Template — two equivalent approaches</div>
-            <div class="row g-3">
+            <div class="row g-4 mt-1">
               <div class="col-md-6">
-                <div class="approach-card">
+                <div class="ep-panel approach-card h-100 mb-0">
                   <div class="approach-label">Context push (recommended)</div>
-                  <pre class="code-block">{{ code.struct_context }}</pre>
-                  <p class="small text-muted mt-2 mb-0"><code>{{ t.address_open }}</code> pushes the struct as context — child fields are then in scope directly.</p>
+                  <div class="ep-code-window mt-2 mb-3">
+                    <pre class="code-block">{{ code.struct_context }}</pre>
+                  </div>
+                  <p class="text-xs text-tertiary mb-0"><code class="ep-inline-code">{{ t.address_open }}</code> pushes the struct as context — child fields are then in scope directly.</p>
                 </div>
               </div>
               <div class="col-md-6">
-                <div class="approach-card">
+                <div class="ep-panel approach-card h-100 mb-0">
                   <div class="approach-label">Dot notation</div>
-                  <pre class="code-block">{{ code.struct_dot }}</pre>
-                  <p class="small text-muted mt-2 mb-0">Dot notation accesses nested fields without a context push — useful for one or two fields.</p>
+                  <div class="ep-code-window mt-2 mb-3">
+                    <pre class="code-block">{{ code.struct_dot }}</pre>
+                  </div>
+                  <p class="text-xs text-tertiary mb-0">Dot notation accesses nested fields without a context push — useful for one or two fields.</p>
                 </div>
               </div>
             </div>
@@ -519,100 +680,127 @@ FROM procurement.suppliers`,
         </div>
 
         <!-- ── Array of Structs ── -->
-        <div v-if="activeSection === 'array-struct'">
-          <h4 class="section-title"><i class="bi bi-list-nested me-2 text-primary"></i>Array of Structs</h4>
-          <p class="text-muted">When a column is <code>ARRAY&lt;STRUCT&lt;...&gt;&gt;</code>, iterate the outer <code>rows</code> first, then the nested array inside.</p>
+        <div v-if="activeSection === 'array-struct'" class="guide-section">
+          <h4 class="section-title"><i class="bi bi-list-nested me-2"></i>Array of Structs</h4>
+          <p class="section-desc">When a column is <code class="ep-inline-code">ARRAY&lt;STRUCT&lt;...&gt;&gt;</code>, iterate the outer <code class="ep-inline-code">rows</code> first, then the nested array inside.</p>
 
           <div class="pattern-step">
             <div class="step-label">1 · Unity Catalog Table with ARRAY&lt;STRUCT&gt;</div>
-            <pre class="code-block">{{ code.array_sql }}</pre>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+              <pre class="code-block">{{ code.array_sql }}</pre>
+            </div>
           </div>
 
           <div class="pattern-step">
             <div class="step-label">2 · Data Shape</div>
-            <pre class="code-block">{{ code.array_data }}</pre>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+              <pre class="code-block">{{ code.array_data }}</pre>
+            </div>
           </div>
 
           <div class="pattern-step">
             <div class="step-label">3 · Template — nested iteration</div>
-            <pre class="code-block">{{ code.array_template }}</pre>
+            <div class="ep-code-window">
+              <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+              <pre class="code-block">{{ code.array_template }}</pre>
+            </div>
           </div>
 
-          <div class="alert alert-info">
-            <i class="bi bi-info-circle me-2"></i>
-            <strong>One page per order:</strong> the outer <code>{{ t.rows_open }}</code> wraps a <code>.report-page</code> div, so each order gets its own page. <code>{{ t.index }}</code> and <code>{{ t.total }}</code> are available on each row.
+          <div class="ep-alert alert-info">
+            <i class="bi bi-info-circle alert-icon"></i>
+            <div class="alert-content">
+              <strong>One page per order:</strong> the outer <code class="ep-inline-code">{{ t.rows_open }}</code> wraps a <code class="ep-inline-code">.report-page</code> div, so each order gets its own page. <code class="ep-inline-code">{{ t.index }}</code> and <code class="ep-inline-code">{{ t.total }}</code> are available on each row.
+            </div>
           </div>
         </div>
 
         <!-- ── Charts from Structs ── -->
-        <div v-if="activeSection === 'chart-struct'">
-          <h4 class="section-title"><i class="bi bi-bar-chart me-2 text-primary"></i>Charts from Struct Columns</h4>
-          <p class="text-muted">Charts read comma-separated strings from <code>data-labels</code> and <code>data-values</code> attributes. There are three ways to feed data in.</p>
+        <div v-if="activeSection === 'chart-struct'" class="guide-section">
+          <h4 class="section-title"><i class="bi bi-bar-chart me-2"></i>Charts from Struct Columns</h4>
+          <p class="section-desc">Charts read comma-separated strings from <code class="ep-inline-code">data-labels</code> and <code class="ep-inline-code">data-values</code> attributes. There are three ways to feed data in.</p>
 
           <div class="pattern-card mb-4">
-            <div class="pattern-header pattern-1">Pattern 1 — Aggregate the main <code>rows</code> array (simplest)</div>
-            <div class="card-body">
-              <p class="small text-muted mb-3">Use when each row already represents one data point you want to plot.</p>
-              <pre class="code-block">{{ code.chart1_template }}</pre>
-              <p class="small text-muted mt-2 mb-0">Mustache renders the loops into: <code>data-labels="EMEA,APAC,AMER,"</code> — trailing commas are ignored by the parser.</p>
+            <div class="pattern-header highlight-primary">Pattern 1 — Aggregate the main <code>rows</code> array (simplest)</div>
+            <div class="pattern-body">
+              <p class="text-xs text-secondary mb-3">Use when each row already represents one data point you want to plot.</p>
+              <div class="ep-code-window">
+                <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+                <pre class="code-block">{{ code.chart1_template }}</pre>
+              </div>
+              <p class="text-xs text-tertiary mt-3 mb-0">Mustache renders the loops into: <code class="ep-inline-code">data-labels="EMEA,APAC,AMER,"</code> — trailing commas are ignored by the parser.</p>
             </div>
           </div>
 
           <div class="pattern-card mb-4">
-            <div class="pattern-header pattern-2">Pattern 2 — Pre-aggregated scalar columns</div>
-            <div class="card-body">
-              <p class="small text-muted mb-3">SQL returns a single summary row with named columns — good for a KPI pie chart on a cover page.</p>
-              <pre class="code-block">{{ code.chart2_template }}</pre>
+            <div class="pattern-header highlight-secondary">Pattern 2 — Pre-aggregated scalar columns</div>
+            <div class="pattern-body">
+              <p class="text-xs text-secondary mb-3">SQL returns a single summary row with named columns — good for a KPI pie chart on a cover page.</p>
+              <div class="ep-code-window">
+                <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+                <pre class="code-block">{{ code.chart2_template }}</pre>
+              </div>
             </div>
           </div>
 
           <div class="pattern-card mb-4">
-            <div class="pattern-header pattern-3">Pattern 3 — ARRAY&lt;STRUCT&gt; chart column (self-contained)</div>
-            <div class="card-body">
-              <p class="small text-muted mb-3">The SQL pre-aggregates chart data into an array column alongside row-level data. Each row carries its own independent chart dataset.</p>
+            <div class="pattern-header highlight-tertiary">Pattern 3 — ARRAY&lt;STRUCT&gt; chart column (self-contained)</div>
+            <div class="pattern-body">
+              <p class="text-xs text-secondary mb-4">The SQL pre-aggregates chart data into an array column alongside row-level data. Each row carries its own independent chart dataset.</p>
 
               <div class="pattern-step">
                 <div class="step-label">SQL</div>
-                <pre class="code-block">{{ code.chart3_sql }}</pre>
+                <div class="ep-code-window">
+                  <pre class="code-block">{{ code.chart3_sql }}</pre>
+                </div>
               </div>
               <div class="pattern-step">
                 <div class="step-label">Data Shape</div>
-                <pre class="code-block">{{ code.chart3_data }}</pre>
+                <div class="ep-code-window">
+                  <pre class="code-block">{{ code.chart3_data }}</pre>
+                </div>
               </div>
               <div class="pattern-step">
-                <div class="step-label">Template — one page per team, each with its own chart</div>
-                <pre class="code-block">{{ code.chart3_template }}</pre>
+                <div class="step-label">Template — one page per team, each with its chart</div>
+                <div class="ep-code-window">
+                  <pre class="code-block">{{ code.chart3_template }}</pre>
+                </div>
               </div>
 
-              <div class="alert alert-success mb-0">
-                <i class="bi bi-check-circle-fill me-2"></i>
-                <strong>Why this pattern is powerful:</strong> each team's chart is driven entirely by its own <code>spend_by_month</code> array — no global aggregation needed in the template. The SQL does the work, the template just renders it.
+              <div class="ep-alert alert-success mt-4 mb-0">
+                <i class="bi bi-check-circle-fill alert-icon"></i>
+                <div class="alert-content">
+                  <strong>Why this pattern is powerful:</strong> each team's chart is driven entirely by its own <code class="ep-inline-code">spend_by_month</code> array — no global aggregation needed in the template. The SQL does the work, the template just renders it.
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="card">
-            <div class="card-header"><i class="bi bi-table me-2"></i>Pattern comparison</div>
-            <div class="card-body p-0">
-              <table class="table table-sm mb-0">
-                <thead class="table-dark">
+          <div class="ep-panel">
+            <div class="ep-panel-header">
+              <h5 class="ep-panel-title"><i class="bi bi-table me-2"></i>Pattern comparison</h5>
+            </div>
+            <div class="ep-panel-body p-0">
+              <table class="ep-table no-hover mb-0">
+                <thead>
                   <tr><th>Pattern</th><th>SQL complexity</th><th>Best for</th></tr>
                 </thead>
                 <tbody>
                   <tr>
-                    <td><span class="badge pattern-badge-1">1 — Aggregate rows</span></td>
+                    <td><span class="ep-badge highlight-primary">1 — Rows</span></td>
                     <td>Low</td>
                     <td>Single summary chart across all rows</td>
                   </tr>
                   <tr>
-                    <td><span class="badge pattern-badge-2">2 — Scalar columns</span></td>
+                    <td><span class="ep-badge highlight-secondary">2 — Scalar</span></td>
                     <td>Low–Medium</td>
                     <td>Fixed labels, one summary row</td>
                   </tr>
                   <tr>
-                    <td><span class="badge pattern-badge-3">3 — Struct array</span></td>
+                    <td><span class="ep-badge highlight-tertiary">3 — Struct array</span></td>
                     <td>Medium</td>
-                    <td>Per-row charts with different datasets on each page</td>
+                    <td>Per-row charts with different datasets</td>
                   </tr>
                 </tbody>
               </table>
@@ -621,83 +809,137 @@ FROM procurement.suppliers`,
         </div>
 
         <!-- ── Conditional Styles ── -->
-        <div v-if="activeSection === 'conditional-styles'">
-          <h4 class="section-title"><i class="bi bi-palette me-2 text-primary"></i>Conditional Styles</h4>
-          <p class="text-muted">Mustache has no expression evaluator, but two clean patterns let you drive colours and layout from data values.</p>
+        <div v-if="activeSection === 'conditional-styles'" class="guide-section">
+          <h4 class="section-title"><i class="bi bi-palette me-2"></i>Conditional Styles</h4>
+          <p class="section-desc">Mustache has no expression evaluator, but two clean patterns let you drive colours and layout from data values.</p>
 
           <div class="pattern-card mb-4">
-            <div class="pattern-header pattern-1">Pattern 1 — CSS class from value (styling only, no SQL changes)</div>
-            <div class="card-body">
-              <p class="small text-muted mb-3">
+            <div class="pattern-header highlight-primary">Pattern 1 — CSS class from value</div>
+            <div class="pattern-body">
+              <p class="text-xs text-secondary mb-4">
                 Interpolate the field value directly into the class name.
-                Add a <code>&lt;style&gt;</code> block at the top of your template with one rule per expected value.
-                Best for badge colours, row highlights, or any purely visual difference.
+                Add a <code class="ep-inline-code">&lt;style&gt;</code> block at the top of your template with one rule per expected value.
               </p>
 
               <div class="pattern-step">
                 <div class="step-label">SQL — no changes needed</div>
-                <pre class="code-block">{{ code.conditional_sql_pattern1 }}</pre>
+                <div class="ep-code-window">
+                  <pre class="code-block">{{ code.conditional_sql_pattern1 }}</pre>
+                </div>
               </div>
 
               <div class="pattern-step">
                 <div class="step-label">Template</div>
-                <pre class="code-block">{{ code.conditional_template_pattern1 }}</pre>
+                <div class="ep-code-window">
+                  <pre class="code-block">{{ code.conditional_template_pattern1 }}</pre>
+                </div>
               </div>
 
-              <div class="alert alert-success mb-0">
-                <i class="bi bi-check-circle-fill me-2"></i>
-                <strong>How it works:</strong> <code>{{ t.cond_class_example }}</code> renders as <code>status-approved</code>, <code>status-pending</code>, or <code>status-rejected</code>.
-                Your CSS rules match on those exact class names.
+              <div class="ep-alert alert-success mb-0 mt-4">
+                <i class="bi bi-check-circle-fill alert-icon"></i>
+                <div class="alert-content">
+                  <strong>How it works:</strong> <code class="ep-inline-code">{{ t.cond_class_example }}</code> renders as <code class="ep-inline-code">status-approved</code>.
+                  Your CSS rules match on those exact class names.
+                </div>
               </div>
             </div>
           </div>
 
           <div class="pattern-card mb-4">
-            <div class="pattern-header pattern-2">Pattern 2 — SQL boolean flags (show/hide entire blocks)</div>
-            <div class="card-body">
-              <p class="small text-muted mb-3">
+            <div class="pattern-header highlight-secondary">Pattern 2 — SQL boolean flags</div>
+            <div class="pattern-body">
+              <p class="text-xs text-secondary mb-4">
                 Add computed boolean columns to your SQL query. Mustache sections
-                (<code>{{ t.section }}</code>) render only when the value is truthy, giving you
-                a full conditional block — not just a style change.
+                render only when the value is truthy, giving you
+                a full conditional block.
               </p>
 
               <div class="pattern-step">
                 <div class="step-label">SQL — add boolean columns</div>
-                <pre class="code-block">{{ code.conditional_sql_pattern2 }}</pre>
+                <div class="ep-code-window">
+                  <pre class="code-block">{{ code.conditional_sql_pattern2 }}</pre>
+                </div>
               </div>
 
               <div class="pattern-step">
                 <div class="step-label">Template — conditional blocks</div>
-                <pre class="code-block">{{ code.conditional_template_pattern2 }}</pre>
+                <div class="ep-code-window">
+                  <pre class="code-block">{{ code.conditional_template_pattern2 }}</pre>
+                </div>
               </div>
 
-              <div class="alert alert-info mb-0">
-                <i class="bi bi-info-circle me-2"></i>
-                <strong>When to use Pattern 2:</strong> when you need to show different content, not just different colours — e.g. a rejection reason block that only appears for rejected suppliers.
+              <div class="ep-alert alert-info mb-0 mt-4">
+                <i class="bi bi-info-circle alert-icon"></i>
+                <div class="alert-content">
+                  <strong>When to use Pattern 2:</strong> when you need to show different content, not just different colours.
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="card">
-            <div class="card-header"><i class="bi bi-table me-2"></i>Pattern comparison</div>
-            <div class="card-body p-0">
-              <table class="table table-sm mb-0">
-                <thead class="table-dark">
+          <div class="ep-panel">
+            <div class="ep-panel-header">
+              <h5 class="ep-panel-title"><i class="bi bi-list-check me-2"></i>Pattern comparison</h5>
+            </div>
+            <div class="ep-panel-body p-0">
+              <table class="ep-table no-hover mb-0">
+                <thead>
                   <tr><th>Pattern</th><th>SQL change?</th><th>Best for</th></tr>
                 </thead>
                 <tbody>
                   <tr>
-                    <td><span class="badge pattern-badge-1">1 — CSS class from value</span></td>
+                    <td><span class="ep-badge highlight-primary">CSS class</span></td>
                     <td>None</td>
-                    <td>Badge colours, row highlights, status indicators</td>
+                    <td>Badge colours, row highlights</td>
                   </tr>
                   <tr>
-                    <td><span class="badge pattern-badge-2">2 — SQL boolean flags</span></td>
-                    <td>Add <code>field = 'value' AS is_x</code></td>
-                    <td>Conditional blocks, different content per status</td>
+                    <td><span class="ep-badge highlight-secondary">Boolean flags</span></td>
+                    <td>Add <code class="ep-inline-code">field = 'v' AS is_x</code></td>
+                    <td>Conditional blocks, different content</td>
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Reliability Notes ── -->
+        <div v-if="activeSection === 'reliability'" class="guide-section">
+          <h4 class="section-title"><i class="bi bi-shield-check me-2"></i>Reliability Notes</h4>
+          <p class="section-desc">Current safeguards and recommended enterprise hardening items.</p>
+
+          <div class="ep-panel mb-4">
+            <div class="ep-panel-header">
+              <h5 class="ep-panel-title"><i class="bi bi-check2-square me-2 text-success"></i>Implemented Safeguards</h5>
+            </div>
+            <div class="ep-panel-body p-0">
+              <ul class="ep-list borderless m-0 p-3">
+                <li>Template identity is UUID-based and consistent across views.</li>
+                <li>Template autosave uses request sequencing and snapshot guards.</li>
+                <li>Preview requests use sequence guards to avoid stale response overwrites.</li>
+                <li>Parameter option loading is dependency-aware and race-safe.</li>
+                <li>Pagination query behavior is deterministic.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="ep-panel mb-4">
+            <div class="ep-panel-header">
+              <h5 class="ep-panel-title"><i class="bi bi-lightning-charge me-2 text-warning"></i>Recommended Hardening (Next Step)</h5>
+            </div>
+            <div class="ep-panel-body">
+              <p class="text-sm text-secondary mb-3">For multi-editor concurrency, add optimistic locking at API update boundaries:</p>
+              <div class="ep-code-window">
+                <div class="ep-code-header"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+                <pre class="code-block">{{ code.optimistic_locking_pattern }}</pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="ep-alert alert-primary mb-0">
+            <i class="bi bi-robot alert-icon"></i>
+            <div class="alert-content">
+              <strong>AI endpoint note:</strong> Assistant responses are served through Databricks Model Serving endpoint configuration (<code class="ep-inline-code">MODEL_SERVING_ENDPOINT</code>).
             </div>
           </div>
         </div>
@@ -709,106 +951,243 @@ FROM procurement.suppliers`,
 
 <style scoped>
 .guide-header {
-  border-bottom: 1px solid #dee2e6;
-  padding-bottom: 1rem;
+  border-bottom: 2px solid var(--ep-border);
+  padding-bottom: 1.5rem;
+}
+
+.guide-page-title {
+  font-weight: 700;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+  color: var(--ep-text);
+  display: flex;
+  align-items: center;
+}
+
+.ep-icon {
+  color: var(--ep-text-muted);
+  font-size: 1.25rem;
+  margin-right: 0.75rem;
+}
+
+.guide-page-subtitle {
+  color: var(--ep-text-muted);
+  font-size: 0.95rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0;
+}
+
+.guide-section {
+  animation: fadeIn 0.3s ease-in-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .section-title {
   font-weight: 700;
-  margin-bottom: 0.75rem;
-  color: var(--pr-dark);
+  font-size: 1.2rem;
+  margin-bottom: 0.5rem;
+  color: var(--ep-text);
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
 }
 
-/* Sidebar nav */
-.guide-nav-btn {
+.section-title i {
+  color: var(--ep-text-muted);
+}
+
+.section-desc {
+  color: var(--ep-text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
+}
+
+/* Nav Menu */
+.ep-nav-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ep-nav-item {
   width: 100%;
   display: flex;
   align-items: center;
-  padding: 0.6rem 0.75rem;
-  border: none;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid transparent;
   background: transparent;
   text-align: left;
   cursor: pointer;
   border-radius: 6px;
   font-size: 0.875rem;
-  color: #495057;
-  margin-bottom: 0.15rem;
+  color: var(--ep-text-muted);
+  font-weight: 500;
   transition: all 0.15s ease;
 }
-.guide-nav-btn:hover { background: #f0f4f8; }
-.guide-nav-btn.active {
-  background: var(--databricks-orange);
-  color: white;
+
+.ep-nav-item i {
+  color: var(--ep-text-tertiary);
+  transition: color 0.15s ease;
+}
+
+.ep-nav-item:hover {
+  background: var(--ep-bg-hover);
+  color: var(--ep-text);
+}
+
+.ep-nav-item.active {
+  background: var(--ep-bg);
+  border-color: var(--ep-border);
+  color: var(--ep-text);
   font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+
+.ep-nav-item.active i {
+  color: var(--databricks-red);
 }
 
 /* Steps */
-.pattern-step { margin-bottom: 1.25rem; }
+.pattern-step {
+  margin-bottom: 1.5rem;
+}
 .step-label {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #6c757d;
-  margin-bottom: 0.4rem;
+  color: var(--ep-text-muted);
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
 }
 
-/* Code blocks */
+/* Code block Windows */
+.ep-code-window {
+  background: #0f1115; /* Sleek dark */
+  border: 1px solid #2a2e33;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.ep-code-header {
+  background: #191c20;
+  border-bottom: 1px solid #2a2e33;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ep-code-header .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dot.red { background: #ff5f56; }
+.dot.yellow { background: #ffbd2e; }
+.dot.green { background: #27c93f; }
+
+.ep-code-header .file-name {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: #888;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  user-select: none;
+}
+
 .code-block {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  font-family: 'Fira Code', 'Consolas', monospace;
-  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
   line-height: 1.55;
-  padding: 0.9rem 1rem;
-  border-radius: 6px;
+  color: #d4d4d4;
+  padding: 1rem;
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-x: auto;
+  background: transparent;
 }
 
 .syntax-tag {
-  background: #1e1e1e;
-  color: #ce9178;
-  font-size: 0.78rem;
-  padding: 0.1rem 0.4rem;
+  background: var(--ep-bg-hover);
+  color: var(--databricks-red);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 0.15rem 0.4rem;
   border-radius: 4px;
+  border: 1px solid var(--ep-border);
 }
 
-/* Pattern cards */
+.ep-inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  padding: 0.1rem 0.3rem;
+  background: var(--ep-bg-hover);
+  border: 1px solid var(--ep-border);
+  border-radius: 4px;
+  color: var(--ep-text);
+}
+
+/* Pattern Cards (Monochrome with subtle accents) */
 .pattern-card {
-  border: none;
+  border: 1px solid var(--ep-border);
   border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  background: var(--ep-bg);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
   overflow: hidden;
 }
-.pattern-header {
-  padding: 0.6rem 1rem;
-  font-weight: 600;
-  font-size: 0.875rem;
-}
-.pattern-1 { background: #e3f2fd; color: #1565c0; }
-.pattern-2 { background: #e8f5e9; color: #2e7d32; }
-.pattern-3 { background: #fff3e0; color: #e65100; }
 
-.pattern-badge-1 { background-color: #1565c0; }
-.pattern-badge-2 { background-color: #2e7d32; }
-.pattern-badge-3 { background-color: #e65100; }
+.pattern-header {
+  padding: 0.75rem 1rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--ep-border);
+  display: flex;
+  align-items: center;
+}
+
+.pattern-header::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.highlight-primary::before { background-color: var(--databricks-red); }
+.highlight-secondary::before { background-color: #3b82f6; } /* subtle blue */
+.highlight-tertiary::before { background-color: #8b5cf6; } /* subtle purple */
+
+.pattern-body {
+  padding: 1rem;
+}
 
 /* Approach cards */
 .approach-card {
-  background: #f8f9fa;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  padding: 0.75rem;
+  padding: 1rem;
 }
 .approach-label {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
-  color: var(--databricks-orange);
-  margin-bottom: 0.5rem;
-  letter-spacing: 0.06em;
+  color: var(--ep-text);
+  letter-spacing: 0.05em;
 }
+
+/* Typography Helpers */
+.text-xs { font-size: 0.75rem; }
+.text-sm { font-size: 0.875rem; }
+.text-secondary { color: var(--ep-text-muted); }
+.text-tertiary { color: var(--ep-text-tertiary); }
 </style>
