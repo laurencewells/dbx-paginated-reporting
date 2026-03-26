@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -11,6 +11,7 @@ class ExecutionStatus(str, Enum):
     running = "running"
     success = "success"
     failed = "failed"
+    interrupted = "interrupted"
 
 
 class Schedule(BaseModel):
@@ -26,6 +27,7 @@ class Schedule(BaseModel):
     created_by: str
     created_at: datetime
     updated_at: datetime
+    send_list_ids: List[UUID] = []
 
 
 class ScheduleCreate(BaseModel):
@@ -37,6 +39,7 @@ class ScheduleCreate(BaseModel):
     template_id: UUID
     cron_expression: str
     is_active: bool = True
+    send_list_ids: List[UUID] = []
 
 
 class ScheduleUpdate(BaseModel):
@@ -46,6 +49,7 @@ class ScheduleUpdate(BaseModel):
     cron_expression: Optional[str] = None
     is_active: Optional[bool] = None
     expected_updated_at: Optional[datetime] = None
+    send_list_ids: Optional[List[UUID]] = None
 
 
 class ScheduleExecution(BaseModel):

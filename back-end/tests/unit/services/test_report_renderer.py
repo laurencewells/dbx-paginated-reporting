@@ -5,6 +5,7 @@ All external dependencies (repos, DataQueryService, chevron) are mocked.
 """
 from __future__ import annotations
 
+import sys
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -110,10 +111,11 @@ class TestRenderReport:
             patch("services.report_renderer.SQLConnector"),
         ):
             from services.report_renderer import render_report
-            result = await render_report(TID)
+            result, returned_template = await render_report(TID)
 
         assert "Alice" in result
         assert isinstance(result, str)
+        assert returned_template.id == TID
 
     @pytest.mark.asyncio
     async def test_renders_empty_context_when_no_sql_query(self):
@@ -132,7 +134,7 @@ class TestRenderReport:
             patch("services.report_renderer.StructuresRepository", return_value=_mock_structures_repo(struct)),
         ):
             from services.report_renderer import render_report
-            result = await render_report(TID)
+            result, _ = await render_report(TID)
 
         assert isinstance(result, str)
         assert "row" not in result  # empty rows — mustache block renders nothing
@@ -185,7 +187,7 @@ class TestRenderReport:
             patch("services.report_renderer.SQLConnector"),
         ):
             from services.report_renderer import render_report
-            await render_report(TID)
+            await render_report(TID)  # noqa: F841 — testing side-effects
 
         mock_svc.execute_for_preview.assert_awaited_once_with(TID, limit=10000)
 
@@ -210,6 +212,119 @@ class TestRenderReport:
             patch("services.report_renderer.SQLConnector"),
         ):
             from services.report_renderer import render_report
-            result = await render_report(TID)
+            result, _ = await render_report(TID)
 
         assert "X" in result
+
+
+# ---------------------------------------------------------------------------
+# render_charts_as_svg
+# ---------------------------------------------------------------------------
+
+
+class TestRenderChartsAsSvg:
+    def test_bar_chart_div_replaced_with_svg(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-bar-chart" data-labels="[Jan,Feb]" data-values="[100,200]"></div>'
+        result = render_charts_as_svg(html)
+        assert '<svg' in result
+        assert 'report-bar-chart' in result
+        assert '<rect' in result  # bars
+
+    def test_pie_chart_div_replaced_with_svg(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-pie-chart" data-labels="[A,B,C]" data-values="[30,50,20]"></div>'
+        result = render_charts_as_svg(html)
+        assert '<svg' in result
+        assert 'report-pie-chart' in result
+        assert '<path' in result  # pie slices
+
+    def test_missing_data_attributes_returns_div_unchanged(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-bar-chart"></div>'
+        assert render_charts_as_svg(html) == html
+
+    def test_non_numeric_values_returns_div_unchanged(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-bar-chart" data-labels="[A,B]" data-values="[x,y]"></div>'
+        assert render_charts_as_svg(html) == html
+
+    def test_all_zero_values_does_not_raise(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-bar-chart" data-labels="[A,B]" data-values="[0,0]"></div>'
+        result = render_charts_as_svg(html)
+        assert '<svg' in result
+
+    def test_non_chart_html_is_unchanged(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="some-other-class"><p>Hello</p></div>'
+        assert render_charts_as_svg(html) == html
+
+    def test_pie_chart_legend_entries_present(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-pie-chart" data-labels="[Alpha,Beta]" data-values="[60,40]"></div>'
+        result = render_charts_as_svg(html)
+        assert 'Alpha' in result
+        assert 'Beta' in result
+
+    def test_bracket_stripped_from_data_attributes(self):
+        from services.report_renderer import render_charts_as_svg
+
+        # Labels with surrounding brackets must still render
+        html = '<div class="report-bar-chart" data-labels="[X,Y,Z]" data-values="[10,20,30]"></div>'
+        result = render_charts_as_svg(html)
+        assert 'X' in result
+        assert '<rect' in result
+
+
+# ---------------------------------------------------------------------------
+# render_report_pdf
+# ---------------------------------------------------------------------------
+
+
+class TestRenderReportPdf:
+    """
+    weasyprint requires system libs not present in dev/CI.
+    Mock render_report directly and patch weasyprint in sys.modules.
+    """
+
+    @pytest.mark.asyncio
+    async def test_returns_pdf_bytes_and_template(self):
+        tmpl = _template()
+        fake_pdf = b"%PDF-1.4 fake"
+        mock_wp = MagicMock()
+        mock_wp.HTML.return_value.write_pdf.return_value = fake_pdf
+
+        with (
+            patch.dict(sys.modules, {"weasyprint": mock_wp}),
+            patch("services.report_renderer.render_report", new=AsyncMock(return_value=("<html/>", tmpl))),
+        ):
+            from services.report_renderer import render_report_pdf
+            pdf_bytes, returned_template = await render_report_pdf(TID)
+
+        assert pdf_bytes == fake_pdf
+        assert returned_template.id == TID
+        mock_wp.HTML.assert_called_once()
+        html_arg = mock_wp.HTML.call_args.kwargs["string"]
+        assert "<html/>" in html_arg  # body is embedded in the full document
+
+    @pytest.mark.asyncio
+    async def test_raises_runtime_error_when_weasyprint_fails(self):
+        tmpl = _template()
+        mock_wp = MagicMock()
+        mock_wp.HTML.return_value.write_pdf.side_effect = Exception("cairo error")
+
+        with (
+            patch.dict(sys.modules, {"weasyprint": mock_wp}),
+            patch("services.report_renderer.render_report", new=AsyncMock(return_value=("<html/>", tmpl))),
+        ):
+            from services.report_renderer import render_report_pdf
+            with pytest.raises(RuntimeError, match="Failed to convert"):
+                await render_report_pdf(TID)

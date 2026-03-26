@@ -1,3 +1,6 @@
+import asyncio
+import os
+import uuid as _uuid
 from typing import List, Optional
 from uuid import UUID
 
@@ -16,7 +19,7 @@ from common.factories.scheduler import scheduler_factory
 from common.logger import log as L
 from models.schedule import ExecutionStatus, Schedule, ScheduleCreate, ScheduleExecution, ScheduleUpdate
 from repositories.schedules import SchedulesRepository
-from services.report_renderer import render_report
+from services.report_renderer import build_html_document, render_charts_as_svg, render_report, render_report_pdf
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -74,8 +77,95 @@ def _remove_job(schedule_id: UUID) -> None:
         pass
 
 
+async def _send_to_lists(
+    schedule: Schedule, html_body: str, pdf_bytes: Optional[bytes] = None
+) -> tuple[str, bool]:
+    """Send the rendered report to all attached send lists.
+
+    If pdf_bytes is provided the report is delivered as a PDF attachment;
+    otherwise the rendered HTML is sent inline.
+
+    Returns a tuple of (summary_message, has_failures).
+    """
+    if not schedule.send_list_ids:
+        return "", False
+
+    from repositories.email_send_lists import EmailSendListsRepository
+    from repositories.smtp_connections import SmtpConnectionsRepository
+    from common.email.sender import send_report_email, send_report_email_with_attachment
+
+    send_lists_repo = EmailSendListsRepository()
+    smtp_repo = SmtpConnectionsRepository()
+    send_lists = await send_lists_repo.get_by_ids(schedule.send_list_ids)
+
+    lines: list[str] = []
+    has_failures = False
+    for sl in send_lists:
+        if not sl.emails:
+            continue
+        conn = await smtp_repo.get_by_id(sl.smtp_connection_id)
+        if not conn:
+            has_failures = True
+            lines.append(f"Email failed: {sl.name} — connection not found")
+            continue
+        try:
+            if pdf_bytes is not None:
+                await send_report_email_with_attachment(
+                    provider=conn.provider,
+                    smtp_host=conn.smtp_host,
+                    smtp_port=conn.smtp_port,
+                    username=conn.username,
+                    secret_scope=conn.secret_scope,
+                    secret_key=conn.secret_key,
+                    from_email=conn.from_email,
+                    recipients=sl.emails,
+                    subject=f"Scheduled Report: {schedule.name}",
+                    pdf_bytes=pdf_bytes,
+                    filename=f"{schedule.name}.pdf",
+                )
+            else:
+                await send_report_email(
+                    provider=conn.provider,
+                    smtp_host=conn.smtp_host,
+                    smtp_port=conn.smtp_port,
+                    username=conn.username,
+                    secret_scope=conn.secret_scope,
+                    secret_key=conn.secret_key,
+                    from_email=conn.from_email,
+                    recipients=sl.emails,
+                    subject=f"Scheduled Report: {schedule.name}",
+                    html_body=html_body,
+                )
+            lines.append(f"Emails sent: {sl.name} ({len(sl.emails)} recipient(s))")
+        except Exception as e:
+            has_failures = True
+            L.error(f"[Scheduler] Email failed for send list {sl.name}: {e}")
+            lines.append(f"Email failed: {sl.name} — {e}")
+
+    return "\n".join(lines), has_failures
+
+
+async def _execute_report(execution_id: UUID, schedule: Schedule, repo: SchedulesRepository) -> None:
+    """Core report execution logic — called inside a timeout wrapper."""
+    html_body, template = await render_report(schedule.template_id)
+    if template.page_size == "email":
+        is_markdown = template.template_type == "markdown"
+        body = html_body or ""
+        if not is_markdown:
+            body = render_charts_as_svg(body)
+        full_html = build_html_document(body, template.name, include_charts=False, is_markdown=is_markdown)
+        email_summary, email_failures = await _send_to_lists(schedule, full_html)
+    else:
+        pdf_bytes, _ = await render_report_pdf(schedule.template_id)
+        email_summary, email_failures = await _send_to_lists(schedule, html_body or "", pdf_bytes=pdf_bytes)
+
+    status = ExecutionStatus.failed if email_failures else ExecutionStatus.success
+    await repo.update_execution(execution_id, status, error_message=email_summary or None)
+    L.info(f"[Scheduler] Execution {execution_id} {'succeeded' if not email_failures else 'completed with email failures'}")
+
+
 async def _run_scheduled_report(schedule_id: UUID) -> None:
-    """APScheduler job function — executed in the scheduler's thread pool."""
+    """APScheduler job function."""
     repo = SchedulesRepository()
     schedule = await repo.get_by_id(schedule_id)
     if not schedule or not schedule.is_active:
@@ -83,10 +173,16 @@ async def _run_scheduled_report(schedule_id: UUID) -> None:
 
     execution = await repo.create_execution(schedule_id)
     L.info(f"[Scheduler] Running schedule {schedule_id} (execution {execution.id})")
+
+    timeout = int(os.getenv("SCHEDULE_JOB_TIMEOUT_SECONDS", "300"))
     try:
-        await render_report(schedule.template_id)
-        await repo.update_execution(execution.id, ExecutionStatus.success)
-        L.info(f"[Scheduler] Execution {execution.id} succeeded")
+        await asyncio.wait_for(_execute_report(execution.id, schedule, repo), timeout=timeout)
+    except asyncio.TimeoutError:
+        L.error(f"[Scheduler] Execution {execution.id} timed out after {timeout}s")
+        await repo.update_execution(
+            execution.id, ExecutionStatus.failed,
+            error_message=f"Execution timed out after {timeout}s",
+        )
     except Exception as e:
         err = str(e)
         L.error(f"[Scheduler] Execution {execution.id} failed: {err}")
@@ -257,7 +353,6 @@ async def trigger_schedule(
         _run_scheduled_report,
         "date",
         args=[schedule_id],
-        id=f"{schedule_id}_manual",
-        replace_existing=True,
+        id=f"manual_{_uuid.uuid4().hex}",
     )
     return {"detail": "Execution triggered"}

@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 PageSize = Literal["A4", "email"]
+TemplateType = Literal["html", "markdown"]
 
 
 class Template(BaseModel):
@@ -17,6 +18,7 @@ class Template(BaseModel):
     structure_id: UUID = Field(alias="structure_id")
     html_content: str = Field("", alias="html_content")
     page_size: PageSize = Field("A4", alias="page_size")
+    template_type: TemplateType = Field("html", alias="template_type")
     created_at: datetime = Field(alias="created_at")
     updated_at: datetime = Field(alias="updated_at")
 
@@ -28,6 +30,7 @@ class TemplateCreate(BaseModel):
     structure_id: UUID
     html_content: str = ""
     page_size: PageSize = "A4"
+    template_type: TemplateType = "html"
 
 
 class TemplateUpdate(BaseModel):
@@ -38,3 +41,4 @@ class TemplateUpdate(BaseModel):
     html_content: Optional[str] = None
     page_size: Optional[PageSize] = None
     expected_updated_at: Optional[datetime] = None
+    # template_type is intentionally excluded — it is immutable after creation

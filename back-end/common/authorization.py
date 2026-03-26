@@ -1,3 +1,4 @@
+import os
 from typing import Annotated
 from uuid import UUID
 
@@ -25,6 +26,19 @@ def get_user_email(request: Request) -> str:
     return email
 
 
+def is_admin(user_email: str) -> bool:
+    """Return True if the user is listed in the ADMIN_EMAILS environment variable."""
+    admin_emails = os.getenv("ADMIN_EMAILS", "")
+    return user_email in [e.strip() for e in admin_emails.split(",") if e.strip()]
+
+
+async def require_admin(email: Annotated[str, Depends(get_user_email)]) -> str:
+    """FastAPI dependency — raises 403 if the current user is not an admin."""
+    if not is_admin(email):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return email
+
+
 def get_projects_repo() -> ProjectsRepository:
     return ProjectsRepository()
 
@@ -47,6 +61,7 @@ def get_schedules_repo() -> SchedulesRepository:
 
 # Annotated aliases for cleaner route signatures
 CurrentUser = Annotated[str, Depends(get_user_email)]
+AdminUser = Annotated[str, Depends(require_admin)]
 ImagesRepo = Annotated[ImagesRepository, Depends(get_images_repo)]
 ProjectsRepo = Annotated[ProjectsRepository, Depends(get_projects_repo)]
 SchedulesRepo = Annotated[SchedulesRepository, Depends(get_schedules_repo)]

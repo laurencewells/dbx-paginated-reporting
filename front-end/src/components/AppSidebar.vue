@@ -35,6 +35,9 @@ const { data: templates } = useListTemplatesApiV1TemplatesGet(templatesParams, {
 const { data: projectsList } = useListProjectsApiV1ProjectsGet()
 const activeStructureId = computed(() => dataStore.activeStructureId)
 const activeTemplateId = computed(() => templatesStore.activeTemplateId)
+const activeTemplateType = computed(() =>
+  (templates.value?.find(t => t.id === activeTemplateId.value) as any)?.template_type ?? 'html'
+)
 
 const activeProjectName = computed(() =>
   projectsList.value?.find(p => p.id === activeProjectId.value)?.name ?? null
@@ -95,6 +98,10 @@ function goToPreview() {
 
 function goToImages() {
   router.push('/images')
+}
+
+function goToSettings() {
+  router.push('/settings')
 }
 
 const componentSnippets = [
@@ -249,6 +256,49 @@ const componentSnippets = [
     </tbody>
   </table>
 </div>`,
+  },
+]
+
+const markdownSnippets = [
+  {
+    name: 'Loop Section',
+    icon: 'bi-arrow-repeat',
+    description: 'One section per row',
+    snippet: `{{#rows}}
+## {{name}}
+
+{{description}}
+
+{{/rows}}`,
+  },
+  {
+    name: 'GFM Table',
+    icon: 'bi-table',
+    description: 'Dynamic data table',
+    snippet: `| Column 1 | Column 2 | Column 3 |
+|----------|----------|----------|
+{{#rows}}| {{field1}} | {{field2}} | {{field3}} |
+{{/rows}}`,
+  },
+  {
+    name: 'Stat Callout',
+    icon: 'bi-card-heading',
+    description: 'Highlighted metric',
+    snippet: `> **Metric:** {{value}}`,
+  },
+  {
+    name: 'Page Break',
+    icon: 'bi-scissors',
+    description: 'Force new page in PDF',
+    snippet: `<div style="page-break-after: always"></div>`,
+  },
+  {
+    name: 'Conditional Block',
+    icon: 'bi-toggles',
+    description: 'Show content if truthy',
+    snippet: `{{#condition}}
+Content shown when condition is true.
+{{/condition}}`,
   },
 ]
 
@@ -418,7 +468,7 @@ function insertComponent(snippet: string) {
         <div class="sidebar-section">
           <span class="sidebar-section-title">Insert Component</span>
           <button
-            v-for="comp in componentSnippets"
+            v-for="comp in (activeTemplateType === 'markdown' ? markdownSnippets : componentSnippets)"
             :key="comp.name"
             class="component-btn"
             :title="comp.description"
@@ -482,6 +532,14 @@ function insertComponent(snippet: string) {
           </div>
         </div>
       </template>
+
+      <!-- Bottom: Settings link -->
+      <div class="sidebar-bottom">
+        <button class="nav-btn settings-btn" @click="goToSettings" :class="{ active: route.path === '/settings' }">
+          <i class="bi bi-gear me-2"></i>
+          <span>Settings</span>
+        </button>
+      </div>
     </div>
 
     <!-- Collapsed state icons -->
@@ -504,6 +562,11 @@ function insertComponent(snippet: string) {
       <button class="collapsed-icon-btn" @click="goToImages" title="Image Gallery">
         <i class="bi bi-images"></i>
       </button>
+      <div class="collapsed-icons-bottom">
+        <button class="collapsed-icon-btn" :class="{ active: route.path === '/settings' }" @click="goToSettings" title="Settings">
+          <i class="bi bi-gear"></i>
+        </button>
+      </div>
     </div>
   </aside>
 </template>
@@ -585,6 +648,25 @@ function insertComponent(snippet: string) {
 
 .sidebar-content {
   padding-top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sidebar-bottom {
+  margin-top: auto;
+  padding: 0.5rem 0.5rem 0.75rem;
+  border-top: 1px solid #e9ecef;
+}
+
+.settings-btn {
+  color: #6c757d;
+}
+
+.settings-btn:hover,
+.settings-btn.active {
+  background: #f0f4f8;
+  color: var(--pr-info, #1b3a57);
 }
 
 .sidebar-collapsed-icons {
@@ -593,6 +675,19 @@ function insertComponent(snippet: string) {
   align-items: center;
   padding-top: 1rem;
   gap: 0.5rem;
+  height: 100%;
+}
+
+.collapsed-icons-bottom {
+  margin-top: auto;
+  padding-bottom: 0.5rem;
+  border-top: 1px solid #e9ecef;
+  padding-top: 0.5rem;
+}
+
+.collapsed-icon-btn.active {
+  background: var(--pr-info, #1b3a57);
+  color: white;
 }
 
 .collapsed-icon-btn {

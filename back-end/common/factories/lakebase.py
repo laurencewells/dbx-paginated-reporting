@@ -22,6 +22,7 @@ from common.connectors.lakebase import (
 )
 from migrations import (
     ALTER_TEMPLATES_ADD_PAGE_SIZE,
+    ALTER_TEMPLATES_ADD_TEMPLATE_TYPE,
     CREATE_APP_SCHEMA,
     CREATE_PROJECTS_TABLE,
     CREATE_PROJECTS_INDEXES,
@@ -39,6 +40,11 @@ from migrations import (
     CREATE_CONVERSATION_MESSAGES_INDEXES,
     CREATE_IMAGES_TABLE,
     CREATE_IMAGES_INDEXES,
+    CREATE_SMTP_CONNECTIONS_TABLE,
+    CREATE_EMAIL_SEND_LISTS_TABLE,
+    CREATE_EMAIL_SEND_LISTS_INDEXES,
+    CREATE_SCHEDULE_SEND_LISTS_TABLE,
+    CREATE_SCHEDULE_SEND_LISTS_INDEXES,
     SEED_PROJECTS,
     SEED_STRUCTURES,
     SEED_TEMPLATES,
@@ -128,6 +134,9 @@ class LakebaseFactory:
             await self._ensure_images_table()
             await self._ensure_schedules_table()
             await self._ensure_schedule_executions_table()
+            await self._ensure_smtp_connections_table()
+            await self._ensure_email_send_lists_table()
+            await self._ensure_schedule_send_lists_table()
             L.info("[Lakebase] === Lakebase initialization complete ===")
         except Exception as e:
             L.error(f"[Lakebase] Failed to initialize connector: {e}")
@@ -222,11 +231,15 @@ class LakebaseFactory:
             index_sql=CREATE_TEMPLATES_INDEXES,
             seed_sql=SEED_TEMPLATES,
         )
-        # Idempotent column addition for existing deployments
+        # Idempotent column additions for existing deployments
         try:
             await self.connector.execute_query(ALTER_TEMPLATES_ADD_PAGE_SIZE)
         except Exception as e:
             L.warning(f"[Lakebase] alter templates page_size: {e}")
+        try:
+            await self.connector.execute_query(ALTER_TEMPLATES_ADD_TEMPLATE_TYPE)
+        except Exception as e:
+            L.warning(f"[Lakebase] alter templates template_type: {e}")
 
     async def _ensure_conversation_messages_table(self) -> None:
         await self._run_migration(
@@ -255,3 +268,28 @@ class LakebaseFactory:
             CREATE_SCHEDULE_EXECUTIONS_TABLE,
             index_sql=CREATE_SCHEDULE_EXECUTIONS_INDEXES,
         )
+
+    async def _ensure_smtp_connections_table(self) -> None:
+        await self._run_migration(
+            "smtp_connections",
+            CREATE_SMTP_CONNECTIONS_TABLE,
+        )
+
+    async def _ensure_email_send_lists_table(self) -> None:
+        await self._run_migration(
+            "email_send_lists",
+            CREATE_EMAIL_SEND_LISTS_TABLE,
+            index_sql=CREATE_EMAIL_SEND_LISTS_INDEXES,
+        )
+
+    async def _ensure_schedule_send_lists_table(self) -> None:
+        await self._run_migration(
+            "schedule_send_lists",
+            CREATE_SCHEDULE_SEND_LISTS_TABLE,
+            index_sql=CREATE_SCHEDULE_SEND_LISTS_INDEXES,
+        )
+        # Idempotent — ensures index exists even on existing deployments
+        try:
+            await self.connector.execute_query(CREATE_SCHEDULE_SEND_LISTS_INDEXES)
+        except Exception as e:
+            L.warning(f"[Lakebase] schedule_send_lists index: {e}")

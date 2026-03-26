@@ -10,6 +10,12 @@ _SCHEDULE_COLUMNS = (
     "cron_expression, is_active, created_by, created_at, updated_at"
 )
 
+_SCHEDULE_WITH_SEND_LISTS = (
+    "s.id, s.name, s.project_id, s.structure_id, s.template_id, "
+    "s.cron_expression, s.is_active, s.created_by, s.created_at, s.updated_at, "
+    "COALESCE(array_agg(ssl.send_list_id) FILTER (WHERE ssl.send_list_id IS NOT NULL), ARRAY[]::uuid[]) AS send_list_ids"
+)
+
 _EXECUTION_COLUMNS = (
     "id, schedule_id, status, started_at, completed_at, error_message, created_at"
 )
@@ -33,22 +39,33 @@ class SchedulesRepository:
 
     async def get_all_for_project(self, project_id: UUID) -> List[Schedule]:
         result = await self._require_connector().execute_query(
-            f"SELECT {_SCHEDULE_COLUMNS} FROM schedules "
-            "WHERE project_id = :pid ORDER BY created_at",
+            f"SELECT {_SCHEDULE_WITH_SEND_LISTS} "
+            "FROM schedules s "
+            "LEFT JOIN schedule_send_lists ssl ON ssl.schedule_id = s.id "
+            "WHERE s.project_id = :pid "
+            "GROUP BY s.id ORDER BY s.created_at",
             {"pid": str(project_id)},
         )
         return [self._row_to_schedule(r) for r in result.fetchall()]
 
     async def get_all_active(self) -> List[Schedule]:
         result = await self._require_connector().execute_query(
-            f"SELECT {_SCHEDULE_COLUMNS} FROM schedules WHERE is_active = TRUE ORDER BY created_at",
+            f"SELECT {_SCHEDULE_WITH_SEND_LISTS} "
+            "FROM schedules s "
+            "LEFT JOIN schedule_send_lists ssl ON ssl.schedule_id = s.id "
+            "WHERE s.is_active = TRUE "
+            "GROUP BY s.id ORDER BY s.created_at",
             {},
         )
         return [self._row_to_schedule(r) for r in result.fetchall()]
 
     async def get_by_id(self, schedule_id: UUID) -> Optional[Schedule]:
         result = await self._require_connector().execute_query(
-            f"SELECT {_SCHEDULE_COLUMNS} FROM schedules WHERE id = :id",
+            f"SELECT {_SCHEDULE_WITH_SEND_LISTS} "
+            "FROM schedules s "
+            "LEFT JOIN schedule_send_lists ssl ON ssl.schedule_id = s.id "
+            "WHERE s.id = :id "
+            "GROUP BY s.id",
             {"id": str(schedule_id)},
         )
         row = result.fetchone()
@@ -70,7 +87,10 @@ class SchedulesRepository:
                 "created_by": user_email,
             },
         )
-        return self._row_to_schedule(result.fetchone())
+        schedule = self._row_to_schedule_no_lists(result.fetchone())
+        await self._set_send_lists(schedule.id, data.send_list_ids)
+        schedule.send_list_ids = list(data.send_list_ids)
+        return schedule
 
     async def update(self, schedule_id: UUID, data: ScheduleUpdate) -> Optional[Schedule]:
         sets: list[str] = []
@@ -86,23 +106,24 @@ class SchedulesRepository:
             sets.append("is_active = :is_active")
             params["is_active"] = data.is_active
 
-        if not sets:
-            return await self.get_by_id(schedule_id)
+        if sets:
+            sets.append("updated_at = NOW()")
+            set_clause = ", ".join(sets)
+            where = "id = :id"
+            if data.expected_updated_at is not None:
+                where += " AND updated_at = :expected_updated_at"
+                params["expected_updated_at"] = data.expected_updated_at
+            result = await self._require_connector().execute_query(
+                f"UPDATE schedules SET {set_clause} WHERE {where} RETURNING {_SCHEDULE_COLUMNS}",
+                params,
+            )
+            if not result.fetchone():
+                return None
 
-        sets.append("updated_at = NOW()")
-        set_clause = ", ".join(sets)
+        if data.send_list_ids is not None:
+            await self._set_send_lists(schedule_id, data.send_list_ids)
 
-        where = "id = :id"
-        if data.expected_updated_at is not None:
-            where += " AND updated_at = :expected_updated_at"
-            params["expected_updated_at"] = data.expected_updated_at
-
-        result = await self._require_connector().execute_query(
-            f"UPDATE schedules SET {set_clause} WHERE {where} RETURNING {_SCHEDULE_COLUMNS}",
-            params,
-        )
-        row = result.fetchone()
-        return self._row_to_schedule(row) if row else None
+        return await self.get_by_id(schedule_id)
 
     async def delete(self, schedule_id: UUID) -> bool:
         result = await self._require_connector().execute_query(
@@ -136,6 +157,21 @@ class SchedulesRepository:
         )
         return [self._row_to_execution(r) for r in result.fetchall()]
 
+    async def mark_interrupted_executions(self) -> int:
+        """Mark any 'running' executions as 'interrupted'.
+
+        Called at startup to clean up records left in a running state by a prior crash or restart.
+        Returns the number of rows updated.
+        """
+        result = await self._require_connector().execute_query(
+            "UPDATE schedule_executions "
+            "SET status = 'interrupted', completed_at = NOW(), "
+            "error_message = 'Server restarted while execution was in progress' "
+            "WHERE status = 'running'",
+            {},
+        )
+        return result.rowcount
+
     async def create_execution(self, schedule_id: UUID) -> ScheduleExecution:
         result = await self._require_connector().execute_query(
             "INSERT INTO schedule_executions (schedule_id, status, started_at) "
@@ -162,10 +198,33 @@ class SchedulesRepository:
             },
         )
 
+    async def _set_send_lists(self, schedule_id: UUID, send_list_ids: List[UUID]) -> None:
+        """Replace all send list associations for a schedule."""
+        conn = self._require_connector()
+        await conn.execute_query(
+            "DELETE FROM schedule_send_lists WHERE schedule_id = :sid",
+            {"sid": str(schedule_id)},
+        )
+        for send_list_id in send_list_ids:
+            await conn.execute_query(
+                "INSERT INTO schedule_send_lists (schedule_id, send_list_id) "
+                "VALUES (:schedule_id, :send_list_id) ON CONFLICT DO NOTHING",
+                {"schedule_id": str(schedule_id), "send_list_id": str(send_list_id)},
+            )
+
+    async def get_send_list_ids(self, schedule_id: UUID) -> List[UUID]:
+        result = await self._require_connector().execute_query(
+            "SELECT send_list_id FROM schedule_send_lists WHERE schedule_id = :sid",
+            {"sid": str(schedule_id)},
+        )
+        return [row[0] for row in result.fetchall()]
+
     # -- Row mappers --------------------------------------------------------------
 
     @staticmethod
     def _row_to_schedule(row) -> Schedule:
+        """Map a row from the send-list-joined query (11 columns)."""
+        send_list_ids = row[10] if row[10] is not None else []
         return Schedule(
             id=row[0],
             name=row[1],
@@ -177,6 +236,24 @@ class SchedulesRepository:
             created_by=row[7],
             created_at=row[8],
             updated_at=row[9],
+            send_list_ids=send_list_ids,
+        )
+
+    @staticmethod
+    def _row_to_schedule_no_lists(row) -> Schedule:
+        """Map a row from the plain schedules INSERT RETURNING (10 columns)."""
+        return Schedule(
+            id=row[0],
+            name=row[1],
+            project_id=row[2],
+            structure_id=row[3],
+            template_id=row[4],
+            cron_expression=row[5],
+            is_active=row[6],
+            created_by=row[7],
+            created_at=row[8],
+            updated_at=row[9],
+            send_list_ids=[],
         )
 
     @staticmethod

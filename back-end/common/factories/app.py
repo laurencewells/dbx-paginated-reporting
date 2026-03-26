@@ -74,6 +74,11 @@ class AppFactory:
             from routes.v1.schedules import _parse_cron, _run_scheduled_report
 
             repo = SchedulesRepository()
+
+            interrupted = await repo.mark_interrupted_executions()
+            if interrupted:
+                L.warning(f"[Scheduler] Marked {interrupted} execution(s) as interrupted (leftover from prior restart)")
+
             active_schedules = await repo.get_all_active()
             L.info(f"[Scheduler] Loading {len(active_schedules)} active schedule(s) from database")
             for schedule in active_schedules:

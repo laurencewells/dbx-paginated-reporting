@@ -41,6 +41,11 @@ const routes: RouteRecordRaw[] = [
     name: 'guide',
     component: () => import('@/views/GuideView.vue'),
   },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: () => import('@/views/SettingsView.vue'),
+  },
 ]
 
 const router = createRouter({

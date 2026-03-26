@@ -9,7 +9,7 @@ const sections = [
   { id: 'flat-table',        label: 'Flat Table',          icon: 'bi-table' },
   { id: 'struct',            label: 'Struct Fields',       icon: 'bi-braces-asterisk' },
   { id: 'array-struct',      label: 'Array of Structs',    icon: 'bi-list-nested' },
-  { id: 'chart-struct',      label: 'Charts from Structs', icon: 'bi-bar-chart' },
+  { id: 'chart-struct',      label: 'Charts from Structs', icon: 'bi-bar-chart', experimental: true },
   { id: 'conditional-styles',label: 'Conditional Styles',  icon: 'bi-palette' },
   { id: 'images',            label: 'Images',              icon: 'bi-images' },
   { id: 'scheduling',        label: 'Scheduling',          icon: 'bi-clock-history' },
@@ -407,6 +407,7 @@ FROM procurement.suppliers`,
             >
               <i :class="['bi', s.icon, 'me-2']"></i>
               {{ s.label }}
+              <span v-if="s.experimental" class="badge-experimental ms-auto">Experimental</span>
             </button>
           </div>
         </div>
@@ -651,7 +652,10 @@ FROM procurement.suppliers`,
 
         <!-- ── Charts from Structs ── -->
         <div v-if="activeSection === 'chart-struct'">
-          <h4 class="section-title"><i class="bi bi-bar-chart me-2 text-primary"></i>Charts from Struct Columns</h4>
+          <h4 class="section-title"><i class="bi bi-bar-chart me-2 text-primary"></i>Charts from Struct Columns <span class="badge-experimental ms-2">Experimental</span></h4>
+          <div class="alert alert-warning py-2 mb-3">
+            <i class="bi bi-flask me-2"></i>Charts are experimental — output quality may vary across PDF, email, and browser preview.
+          </div>
           <p class="text-muted">Charts read comma-separated strings from <code>data-labels</code> and <code>data-values</code> attributes. There are three ways to feed data in.</p>
 
           <div class="pattern-card mb-4">
@@ -1095,6 +1099,8 @@ FROM procurement.suppliers`,
 .pattern-badge-1 { background-color: #1565c0; }
 .pattern-badge-2 { background-color: #2e7d32; }
 .pattern-badge-3 { background-color: #e65100; }
+.badge-experimental { background: #fff3cd; color: #856404; border: 1px solid #ffc107; font-size: 0.65rem; font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
+.guide-nav-btn.active .badge-experimental { background: rgba(255,255,255,0.2); color: white; border-color: rgba(255,255,255,0.4); }
 
 /* Approach cards */
 .approach-card {

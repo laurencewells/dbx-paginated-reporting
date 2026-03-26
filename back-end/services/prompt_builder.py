@@ -2,14 +2,85 @@
 Build context-aware system prompts for the Agent service.
 
 When a template_id is provided, the prompt includes the structure's fields,
-the template HTML, and the SQL query so the Agent can give precise help
-with Mustache templates.
+the template content, and the SQL context so the Agent can give precise help.
+The prompt content is tailored to the template type (html or markdown).
 """
 
 import json
 
 from models.structure import Structure
 from models.template import Template
+
+_MUSTACHE_REFERENCE = """
+## Mustache Syntax Reference
+
+| Syntax | Purpose |
+|--------|---------|
+| `{{{{variable}}}}` | Render a value |
+| `{{{{#section}}}}...{{{{/section}}}}` | Block — renders if truthy; iterates if array |
+| `{{{{^section}}}}...{{{{/section}}}}` | Inverted block — renders if falsy or empty |
+| `{{{{! comment }}}}` | Comment — not rendered |
+| `{{{{.}}}}` | Current item — use inside a loop over a plain scalar list only |
+
+Inside array sections, each item's fields are in scope directly.
+The system injects `_index` (1-based) and `_total` on each array item.
+
+**Closing tags must always match the opening tag name exactly** — `{{{{#rows}}}}` closes with `{{{{/rows}}}}`.
+`{{{{#.}}}}` / `{{{{.}}}}` are only correct when iterating a plain scalar list (strings/numbers) with no named fields.
+For lists of objects, always use the named key: `{{{{#rows}}}}{{{{field}}}}{{{{/rows}}}}`.
+"""
+
+_DATA_SHAPE_SECTION = """
+## Data Shape — Always a Table
+
+The data is **always** the result of a SQL query against a Unity Catalog table.
+The top-level context always has a single key `rows` — a list of objects where every item has the same named fields:
+
+```
+{{ "rows": [ {{"field1": ..., "field2": ...}}, ... ] }}
+```
+
+- **Never use `{{{{.}}}}`** — every value has a named field.
+- **Never use `{{{{#.}}}}`** — always iterate with `{{{{#rows}}}}...{{{{/rows}}}}`.
+- Closing tags must match the opening name exactly: `{{{{#rows}}}}` closes with `{{{{/rows}}}}`.
+- To check for null/empty use the inverted section: `{{{{^field}}}}...{{{{/field}}}}`.
+"""
+
+
+def _sql_section(structure: Structure) -> str:
+    if not structure.sql_query or not structure.tables:
+        return ""
+    table = structure.tables[0]
+    columns = ", ".join(structure.selected_columns) if structure.selected_columns else "all"
+    return f"""
+## Data Source
+Table: `{table.full_name}`
+Selected columns: {columns}
+
+Auto-generated SQL query:
+```sql
+{structure.sql_query}
+```
+"""
+
+
+def _fields_section(structure: Structure) -> str:
+    fields_json = json.dumps(
+        [f.model_dump(exclude_none=True) for f in structure.fields], indent=2
+    )
+    return f"""## Current Structure: "{structure.name}"
+
+Available fields (JSON):
+```json
+{fields_json}
+```
+
+Each field maps directly to a named key on every object inside `rows`.
+
+**Nested objects (structs):** Use `{{{{#fieldName}}}}` to push context and access child fields directly, or use dot notation `{{{{address.city}}}}`.
+
+**Nested arrays (array of structs):** Iterate the same way as `rows`. Use `{{{{.}}}}` only for plain scalar arrays.
+"""
 
 
 def build_report_agent_prompt(
@@ -18,49 +89,18 @@ def build_report_agent_prompt(
     """
     Return a system prompt tailored to the current template and structure.
 
-    The prompt teaches the Agent about Mustache syntax, report component
-    patterns, and includes the live context (fields, HTML, SQL) so it can
-    give targeted advice.
+    Serves an HTML-specific prompt for html templates and a Markdown-specific
+    prompt for markdown templates so the agent gives correctly targeted advice.
     """
-    fields_json = json.dumps(
-        [f.model_dump(exclude_none=True) for f in structure.fields], indent=2
-    )
+    if template.template_type == "markdown":
+        return _build_markdown_prompt(structure, template)
+    return _build_html_prompt(structure, template)
 
-    sql_section = ""
-    if structure.sql_query and structure.tables:
-        table = structure.tables[0]
-        sql_section = f"""
-## Data Source
-Table: `{table.full_name}`
-Selected columns: {", ".join(structure.selected_columns) if structure.selected_columns else "all"}
 
-Auto-generated SQL query:
-```sql
-{structure.sql_query}
-```
-"""
-
+def _build_html_prompt(structure: Structure, template: Template) -> str:
     return f"""You are an expert report-building assistant for a paginated reporting application.
 You help users write Mustache HTML templates for data-driven reports.
-
-## Mustache Syntax Reference
-
-| Syntax | Purpose |
-|--------|---------|
-| `{{{{variable}}}}` | Render a value (HTML-escaped) |
-| `{{{{{{variable}}}}}}` | Render a value (unescaped HTML) |
-| `{{{{#section}}}}...{{{{/section}}}}` | Block — renders if truthy; iterates if array |
-| `{{{{^section}}}}...{{{{/section}}}}` | Inverted block — renders if falsy or empty |
-| `{{{{! comment }}}}` | Comment — not rendered |
-| `{{{{.}}}}` | Current item — use inside a loop over a plain scalar list (strings, numbers) |
-
-Inside array sections, each item's fields are in scope directly.
-The system injects `_index` (1-based) and `_total` on each array item.
-
-**Closing tags must always match the opening tag name exactly** — `{{{{#rows}}}}` closes with `{{{{/rows}}}}`, never `{{{{/#}}}}`.
-`{{{{#.}}}}` / `{{{{.}}}}` are only correct when iterating a plain scalar list (strings/numbers) with no named fields.
-For lists of objects, always use the named key: `{{{{#rows}}}}{{{{field}}}}{{{{/rows}}}}`.
-
+{_MUSTACHE_REFERENCE}
 ## Styling — Bootstrap 5 First
 
 Bootstrap 5 is fully loaded in the report renderer. **Always prefer Bootstrap utility classes** over custom CSS:
@@ -83,65 +123,14 @@ Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradi
 
 ## Images
 
-Users can upload images to the Image Gallery and use them in templates via `<img>` tags:
-
+Users can upload images to the Image Gallery and reference them via:
 ```html
 <img src="/api/v1/images/IMAGE_ID/data" alt="Description" />
 ```
-
-- The image URL path is `/api/v1/images/{{IMAGE_ID}}/data` — users copy this from the gallery.
-- Standard `<img>` tags work in both preview and PDF export.
-- CSS `background-image: url(...)` pointing to gallery images does **not** work — the CSS sanitizer blocks non-`data:` URLs for security.
-- Always use `<img>` tags instead of CSS background images for gallery images.
-- Supported formats: JPEG, PNG, GIF, WebP, SVG (max 2 MB, up to 20 per project).
-
-Common patterns:
-- **Logo in header**: `<img src="/api/v1/images/ID/data" style="height: 48px;" />`
-- **Inline with text**: wrap in a flex container with Bootstrap `d-flex align-items-center gap-3`
-
-## Data Shape — Always a Table
-
-The data is **always** the result of a SQL query against a Unity Catalog table.
-The top-level context always has a single key `rows` — a list of objects where every item has the same named fields:
-
-```
-{{ "rows": [ {{"field1": ..., "field2": ...}}, ... ] }}
-```
-
-- **Never use `{{{{.}}}}`** — every value has a named field.
-- **Never use `{{{{#.}}}}`** — always iterate with `{{{{#rows}}}}...{{{{/rows}}}}`.
-- Closing tags must match the opening name exactly: `{{{{#rows}}}}` closes with `{{{{/rows}}}}`.
-- To check for null/empty use the inverted section: `{{{{^field}}}}...{{{{/field}}}}`.
-
-## Current Structure: "{structure.name}"
-
-Available fields (JSON):
-```json
-{fields_json}
-```
-
-Each field maps directly to a named key on every object inside `rows`.
-
-**Nested objects (structs):** If a field is an object (struct), use `{{{{#fieldName}}}}` to push it as the current context and access its child fields directly:
-```html
-{{{{#rows}}}}
-  {{{{#address}}}}
-    <td>{{{{city}}}}, {{{{country}}}}</td>
-  {{{{/address}}}}
-{{{{/rows}}}}
-```
-Alternatively, use dot notation without a context push: `{{{{address.city}}}}`.
-
-**Nested arrays (array of structs):** If a field is an array of objects, iterate it the same way:
-```html
-{{{{#rows}}}}
-  {{{{#tags}}}}
-    <span class="badge bg-secondary">{{{{name}}}}</span>
-  {{{{/tags}}}}
-{{{{/rows}}}}
-```
-If a field is an array of plain scalars (not objects), use `{{{{.}}}}` inside the loop — this is the only valid case for `{{{{.}}}}`.
-{sql_section}
+Always use `<img>` tags — CSS `background-image` with gallery URLs is blocked by the sanitizer.
+{_DATA_SHAPE_SECTION}
+{_fields_section(structure)}
+{_sql_section(structure)}
 ## Current Template: "{template.name}"
 
 ```html
@@ -155,4 +144,63 @@ If a field is an array of plain scalars (not objects), use `{{{{.}}}}` inside th
 - When users ask about fields, reference the structure definition above.
 - **Always wrap every HTML response in a single markdown code block** (` ```html ... ``` `) so the user can copy and paste it directly.
 - Output complete, self-contained templates — never partial snippets unless the user explicitly asks for one.
+"""
+
+
+def _build_markdown_prompt(structure: Structure, template: Template) -> str:
+    return f"""You are an expert report-building assistant for a paginated reporting application.
+You help users write Mustache + Markdown templates for data-driven reports.
+
+This template type uses **Mustache for data binding** and **extended Markdown (GFM) for formatting**.
+Mustache is processed first, then the result is converted to HTML — so all standard Mustache syntax works inside Markdown.
+
+**Important constraints:**
+- No HTML, no Bootstrap classes, no CSS — Markdown only.
+- No charts — charts are not supported in Markdown templates.
+- Use Markdown tables, headings, lists, code blocks, and blockquotes for all formatting.
+{_MUSTACHE_REFERENCE}
+## Markdown Formatting Reference
+
+| Element | Syntax |
+|---------|--------|
+| Heading 1 | `# Title` |
+| Heading 2 | `## Section` |
+| Bold | `**text**` |
+| Italic | `*text*` |
+| Strikethrough | `~~text~~` |
+| Inline code | `` `code` `` |
+| Fenced code block | ` ```lang ... ``` ` |
+| Blockquote | `> text` |
+| Task list item | `- [x] done` / `- [ ] todo` |
+| Footnote | `[^1]` with `[^1]: text` at end |
+| Horizontal rule | `---` |
+
+## GFM Tables
+
+Use pipe syntax for tables. Mustache can populate rows dynamically:
+
+```markdown
+| Name | Value | Status |
+|------|-------|--------|
+{{{{#rows}}}}| {{{{name}}}} | {{{{value}}}} | {{{{status}}}} |
+{{{{/rows}}}}
+```
+
+Column alignment: `|:---|` left, `|:---:|` centre, `|---:|` right.
+{_DATA_SHAPE_SECTION}
+{_fields_section(structure)}
+{_sql_section(structure)}
+## Current Template: "{template.name}"
+
+```markdown
+{template.html_content}
+```
+
+## Your Role
+
+- Help users write and debug Mustache + Markdown templates.
+- When users ask about fields, reference the structure definition above.
+- **Always wrap every Markdown response in a single fenced code block** (` ```markdown ... ``` `) so the user can copy and paste it directly.
+- Output complete, self-contained templates — never partial snippets unless the user explicitly asks for one.
+- Never suggest HTML, Bootstrap, or chart components — they are not supported in Markdown templates.
 """

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException
 from models import Me
+from common.authorization import is_admin
 from common.config import is_development
 from common.logger import log as L
 
@@ -28,7 +29,7 @@ async def get_me(request: Request) -> Me:
             username = "Development User"
             ip = ip or "127.0.0.1"
 
-        return Me(email=email, username=username, ip=ip)
+        return Me(email=email, username=username, ip=ip, is_admin=is_admin(email))
     except Exception:
         L.exception("Unable to determine current user")
         raise HTTPException(status_code=401, detail="Unable to determine current user")

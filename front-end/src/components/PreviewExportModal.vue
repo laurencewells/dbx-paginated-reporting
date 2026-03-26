@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useToastStore } from '@/stores/toast'
 import Mustache from 'mustache'
+import { marked } from 'marked'
 import { previewDataApiV1TemplatesTemplateIdPreviewDataPost } from '@/api/generated'
 import type { PreviewDataResponse } from '@/api/generated'
 
@@ -10,6 +11,7 @@ const props = defineProps<{
   templateId: string | null
   templateName: string | null
   htmlContent: string
+  templateType?: 'html' | 'markdown'
   structureName?: string | null
 }>()
 
@@ -57,39 +59,99 @@ const REPORT_STYLES = `
 `
 
 const CHART_SCRIPT = `
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"><\/script>
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-  var COLORS = ['rgba(52,152,219,0.8)','rgba(46,204,113,0.8)','rgba(155,89,182,0.8)','rgba(241,196,15,0.8)','rgba(231,76,60,0.8)','rgba(26,188,156,0.8)','rgba(230,126,34,0.8)'];
-  var BORDERS = ['rgba(52,152,219,1)','rgba(46,204,113,1)','rgba(155,89,182,1)','rgba(241,196,15,1)','rgba(231,76,60,1)','rgba(26,188,156,1)','rgba(230,126,34,1)'];
-  function parse(el) {
-    var l = (el.getAttribute('data-labels')||'').replace(/^\\[|]$/g,'');
-    var v = (el.getAttribute('data-values')||'').replace(/^\\[|]$/g,'');
-    return { labels: l.split(',').map(function(s){return s.trim()}).filter(Boolean), values: v.split(',').map(function(s){return s.trim()}).filter(Boolean).map(Number) };
+(function(){
+  var VW=560,VH=300;
+  var COLORS=['#3498db','#2ecc71','#9b59b6','#f1c40f','#e74c3c','#1abc9c','#e67e22'];
+  function parse(el){
+    var l=(el.getAttribute('data-labels')||'').replace(/^\\[|\\]$/g,'');
+    var v=(el.getAttribute('data-values')||'').replace(/^\\[|\\]$/g,'');
+    return{labels:l.split(',').map(function(s){return s.trim()}).filter(Boolean),values:v.split(',').map(function(s){return parseFloat(s.trim())}).filter(function(n){return !isNaN(n)})};
   }
-  function render(sel, type) {
-    document.querySelectorAll(sel).forEach(function(el) {
-      var d = parse(el); if (!d.labels.length) return;
-      var canvas = document.createElement('canvas'); canvas.style.maxHeight='300px'; el.innerHTML=''; el.appendChild(canvas);
-      new Chart(canvas, { type: type, data: { labels: d.labels, datasets: [{ data: d.values, backgroundColor: COLORS.slice(0,d.values.length), borderColor: type==='pie'?'#fff':BORDERS.slice(0,d.values.length), borderWidth: type==='pie'?2:1 }] }, options: { responsive:true, maintainAspectRatio:false, animation:false, plugins:{ legend:{ display:type==='pie', position:'bottom' } }, scales: type==='bar'?{ y:{ beginAtZero:true } }:{} } });
-    });
+  function bar(labels,values){
+    var n=labels.length,maxV=Math.max.apply(null,values.concat([0]))||1;
+    var pT=30,pB=50,pL=50,pR=20,cW=VW-pL-pR,cH=VH-pT-pB,gW=cW/n,bW=gW*0.6,many=n>10,fs=many?9:11;
+    var s='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+VW+' '+VH+'" style="width:100%;max-height:'+VH+'px;display:block;">';
+    s+='<line x1="'+pL+'" y1="'+pT+'" x2="'+pL+'" y2="'+(pT+cH)+'" stroke="#ccc"/>';
+    s+='<line x1="'+pL+'" y1="'+(pT+cH)+'" x2="'+(pL+cW)+'" y2="'+(pT+cH)+'" stroke="#ccc"/>';
+    for(var i=0;i<n;i++){
+      var c=COLORS[i%COLORS.length],bH=(values[i]/maxV)*cH,x=(pL+i*gW+(gW-bW)/2).toFixed(1),y=(pT+cH-bH).toFixed(1);
+      s+='<rect x="'+x+'" y="'+y+'" width="'+bW.toFixed(1)+'" height="'+bH.toFixed(1)+'" fill="'+c+'" rx="2"/>';
+      if(!many){var vs=Number.isInteger(values[i])?values[i]:values[i].toFixed(1);s+='<text x="'+(parseFloat(x)+bW/2).toFixed(1)+'" y="'+(parseFloat(y)-4).toFixed(1)+'" text-anchor="middle" font-size="'+fs+'" fill="#555">'+vs+'<\/text>';}
+      var ld=labels[i].length>10?labels[i].slice(0,10)+'\u2026':labels[i],cx=(pL+i*gW+gW/2).toFixed(1);
+      s+='<text x="'+cx+'" y="'+(pT+cH+16)+'" text-anchor="middle" font-size="'+fs+'" fill="#555">'+ld+'<\/text>';
+    }
+    return s+'<\/svg>';
   }
-  render('.report-bar-chart','bar'); render('.report-pie-chart','pie');
-});
+  function pie(labels,values){
+    var n=labels.length,total=values.reduce(function(a,b){return a+b},0)||1;
+    var cx=200,cy=150,r=120,lx=340,ly0=60,rh=24,vh=Math.max(VH,60+n*rh+20);
+    var s='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 '+vh+'" style="width:100%;max-height:'+vh+'px;display:block;">';
+    var a=-Math.PI/2;
+    for(var i=0;i<n;i++){
+      var c=COLORS[i%COLORS.length],sw=(values[i]/total)*2*Math.PI;
+      var x1=(cx+r*Math.cos(a)).toFixed(3),y1=(cy+r*Math.sin(a)).toFixed(3);
+      a+=sw;
+      var x2=(cx+r*Math.cos(a)).toFixed(3),y2=(cy+r*Math.sin(a)).toFixed(3);
+      var lg=sw>Math.PI?1:0;
+      s+='<path d="M'+cx+','+cy+' L'+x1+','+y1+' A'+r+','+r+' 0 '+lg+',1 '+x2+','+y2+' Z" fill="'+c+'" stroke="#fff" stroke-width="2"/>';
+      var ly=ly0+i*rh,ld=labels[i].length>14?labels[i].slice(0,14)+'\u2026':labels[i];
+      s+='<rect x="'+lx+'" y="'+(ly-10)+'" width="14" height="14" fill="'+c+'" rx="2"/>';
+      s+='<text x="'+(lx+18)+'" y="'+ly+'" font-size="11" fill="#555">'+ld+'<\/text>';
+    }
+    return s+'<\/svg>';
+  }
+  function renderAll(sel,fn){document.querySelectorAll(sel).forEach(function(el){var d=parse(el);if(!d.labels.length)return;el.innerHTML=fn(d.labels,d.values);});}
+  document.addEventListener('DOMContentLoaded',function(){renderAll('.report-bar-chart',bar);renderAll('.report-pie-chart',pie);});
+})();
 <\/script>`
 
+const MARKDOWN_STYLES = `
+  @page { size: A4; margin: 15mm 20mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 15px; line-height: 1.7; color: #212529; }
+  .markdown-body { max-width: 100%; padding: 2.5rem 3rem; }
+  h1, h2, h3, h4, h5, h6 { color: #2d3e50; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; }
+  h1 { font-size: 2rem; font-weight: 700; border-bottom: 2px solid #2d3e50; padding-bottom: 0.5rem; }
+  h2 { font-size: 1.5rem; border-bottom: 1px solid #dee2e6; padding-bottom: 0.25rem; }
+  h3 { font-size: 1.25rem; }
+  p { margin-bottom: 1rem; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+  thead { background: #2d3e50; color: white; }
+  th { padding: 0.75rem 1rem; text-align: left; font-weight: 600; font-size: 0.875rem; }
+  td { padding: 0.625rem 1rem; border-bottom: 1px solid #eee; }
+  tbody tr:nth-child(even) { background: #f8f9fa; }
+  code { background: #f3f3f3; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.875em; color: #c0392b; }
+  pre { background: #2d2d44; color: #f8f8f2; padding: 1rem; border-radius: 6px; margin-bottom: 1rem; }
+  pre code { background: none; color: inherit; padding: 0; }
+  blockquote { border-left: 4px solid #3498db; margin: 0 0 1rem; padding: 0.5rem 1rem; background: #f0f8ff; color: #555; border-radius: 0 4px 4px 0; }
+  blockquote p { margin: 0; }
+  ul, ol { margin-bottom: 1rem; padding-left: 1.5rem; }
+  li { margin-bottom: 0.25rem; }
+  hr { border: none; border-top: 1px solid #dee2e6; margin: 1.5rem 0; }
+  del { color: #6c757d; }
+`
+
+function renderBody(mustacheOutput: string): string {
+  if (props.templateType === 'markdown') {
+    return `<div class="markdown-body">${marked.parse(mustacheOutput) as string}</div>`
+  }
+  return mustacheOutput
+}
+
 function buildDocument(body: string, title: string): string {
+  const isMarkdown = props.templateType === 'markdown'
   return `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <title>${title}</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-<style>${REPORT_STYLES}</style>
-</head><body>${body}${CHART_SCRIPT}</body></html>`
+${isMarkdown ? '' : '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">'}
+<style>${isMarkdown ? MARKDOWN_STYLES : REPORT_STYLES}</style>
+</head><body>${body}${isMarkdown ? '' : CHART_SCRIPT}</body></html>`
 }
 
 const renderedHtml = computed(() => {
   if (!props.htmlContent) return ''
-  try { return Mustache.render(props.htmlContent, previewData.value) } catch { return '' }
+  try { return renderBody(Mustache.render(props.htmlContent, previewData.value)) } catch { return '' }
 })
 
 const previewDocument = computed(() =>
@@ -122,22 +184,16 @@ async function exportToPdf() {
     const result = (await previewDataApiV1TemplatesTemplateIdPreviewDataPost(
       props.templateId, { limit: 1000 },
     )) as unknown as PreviewDataResponse
-    const fullHtml = Mustache.render(props.htmlContent, result.data)
-    const doc = buildDocument(fullHtml, props.templateName ?? 'Report')
+    const doc = buildDocument(renderBody(Mustache.render(props.htmlContent, result.data)), props.templateName ?? 'Report')
     const iframe = document.createElement('iframe')
     iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;height:1123px;border:none;visibility:hidden;'
     document.body.appendChild(iframe)
     iframe.srcdoc = doc
     iframe.onload = () => {
       const win = iframe.contentWindow!
-      let attempts = 0
-      const waitForCharts = () => {
-        const pending = win.document.querySelectorAll('.report-bar-chart:empty, .report-pie-chart:empty')
-        if (pending.length > 0 && attempts < 20) { attempts++; setTimeout(waitForCharts, 150); return }
-        win.focus(); win.print()
-        setTimeout(() => { try { document.body.removeChild(iframe) } catch { /* removed */ } }, 2000)
-      }
-      setTimeout(waitForCharts, 1000)
+      win.focus()
+      win.print()
+      setTimeout(() => { try { document.body.removeChild(iframe) } catch { /* removed */ } }, 2000)
     }
   } catch {
     toastStore.warning('Failed to generate PDF')
