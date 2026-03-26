@@ -21,11 +21,16 @@ from common.connectors.lakebase import (
     set_lakebase_connector,
 )
 from migrations import (
+    ALTER_TEMPLATES_ADD_PAGE_SIZE,
     CREATE_APP_SCHEMA,
     CREATE_PROJECTS_TABLE,
     CREATE_PROJECTS_INDEXES,
     CREATE_PROJECT_SHARES_TABLE,
     CREATE_PROJECT_SHARES_INDEXES,
+    CREATE_SCHEDULE_EXECUTIONS_TABLE,
+    CREATE_SCHEDULE_EXECUTIONS_INDEXES,
+    CREATE_SCHEDULES_TABLE,
+    CREATE_SCHEDULES_INDEXES,
     CREATE_STRUCTURES_TABLE,
     CREATE_STRUCTURES_INDEXES,
     CREATE_TEMPLATES_TABLE,
@@ -121,6 +126,8 @@ class LakebaseFactory:
             await self._ensure_templates_table()
             await self._ensure_conversation_messages_table()
             await self._ensure_images_table()
+            await self._ensure_schedules_table()
+            await self._ensure_schedule_executions_table()
             L.info("[Lakebase] === Lakebase initialization complete ===")
         except Exception as e:
             L.error(f"[Lakebase] Failed to initialize connector: {e}")
@@ -215,6 +222,11 @@ class LakebaseFactory:
             index_sql=CREATE_TEMPLATES_INDEXES,
             seed_sql=SEED_TEMPLATES,
         )
+        # Idempotent column addition for existing deployments
+        try:
+            await self.connector.execute_query(ALTER_TEMPLATES_ADD_PAGE_SIZE)
+        except Exception as e:
+            L.warning(f"[Lakebase] alter templates page_size: {e}")
 
     async def _ensure_conversation_messages_table(self) -> None:
         await self._run_migration(
@@ -228,4 +240,18 @@ class LakebaseFactory:
             "images",
             CREATE_IMAGES_TABLE,
             index_sql=CREATE_IMAGES_INDEXES,
+        )
+
+    async def _ensure_schedules_table(self) -> None:
+        await self._run_migration(
+            "schedules",
+            CREATE_SCHEDULES_TABLE,
+            index_sql=CREATE_SCHEDULES_INDEXES,
+        )
+
+    async def _ensure_schedule_executions_table(self) -> None:
+        await self._run_migration(
+            "schedule_executions",
+            CREATE_SCHEDULE_EXECUTIONS_TABLE,
+            index_sql=CREATE_SCHEDULE_EXECUTIONS_INDEXES,
         )

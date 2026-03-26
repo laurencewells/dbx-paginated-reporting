@@ -116,6 +116,9 @@ watch(
 )
 
 
+const currentPageSize = ref<'A4' | 'email'>('A4')
+const isSavingPageSize = ref(false)
+
 const previewDataResult = ref<Record<string, unknown>>({})
 const previewLoading = ref(false)
 const previewCache = new Map<string, Record<string, unknown>>()
@@ -189,6 +192,8 @@ watch(
       htmlContent.value = template.html_content ?? ''
       selectedStructureId.value = template.structure_id
       templateName.value = template.name
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      currentPageSize.value = (template as any).page_size ?? 'A4'
       lastKnownUpdatedAt.value = template.updated_at
       saveState.value = 'idle'
       loadPreviewData()
@@ -263,6 +268,24 @@ function reloadTemplate() {
   if (!activeTemplate.value) return
   queryClient.invalidateQueries({ queryKey: getListTemplatesApiV1TemplatesGetQueryKey(templatesParams) })
   saveState.value = 'idle'
+}
+
+async function savePageSize(size: 'A4' | 'email') {
+  if (!activeTemplate.value || isLocked.value || isSavingPageSize.value) return
+  isSavingPageSize.value = true
+  currentPageSize.value = size
+  try {
+    const result = await updateTemplateMutation({
+      templateId: activeTemplate.value.id,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      data: { page_size: size, expected_updated_at: lastKnownUpdatedAt.value } as any,
+    })
+    lastKnownUpdatedAt.value = result.updated_at
+  } catch {
+    toastStore.error('Failed to save page size')
+  } finally {
+    isSavingPageSize.value = false
+  }
 }
 
 async function createTemplate() {
@@ -542,6 +565,14 @@ onUnmounted(() => {
         <button v-if="!isLocked" class="btn btn-sm btn-outline-primary" @click="showNewTemplateModal = true"><i class="bi bi-plus-lg me-1"></i> New</button>
       </div>
       <div v-if="activeTemplate" class="d-flex align-items-center gap-2">
+        <div class="btn-group btn-group-sm" role="group" title="Page size">
+          <button type="button" class="btn" :class="currentPageSize === 'A4' ? 'btn-secondary' : 'btn-outline-secondary'" :disabled="isLocked || isSavingPageSize" @click="savePageSize('A4')">
+            <i class="bi bi-file-earmark me-1"></i>A4
+          </button>
+          <button type="button" class="btn" :class="currentPageSize === 'email' ? 'btn-secondary' : 'btn-outline-secondary'" :disabled="isLocked || isSavingPageSize" @click="savePageSize('email')">
+            <i class="bi bi-envelope me-1"></i>Email
+          </button>
+        </div>
         <div class="btn-group btn-group-sm" role="group">
           <button type="button" class="btn btn-outline-secondary" :class="{ active: splitRatio < 35 }" @click="setSplitRatio(30)" title="More preview"><i class="bi bi-layout-sidebar-reverse"></i></button>
           <button type="button" class="btn btn-outline-secondary" :class="{ active: splitRatio >= 35 && splitRatio <= 65 }" @click="setSplitRatio(50)" title="Equal split"><i class="bi bi-layout-split"></i></button>
@@ -554,7 +585,7 @@ onUnmounted(() => {
     </div>
 
     <div v-if="activeTemplate" class="template-info-bar mb-2">
-      <div class="d-flex align-items-center gap-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
         <span class="badge bg-primary"><i class="bi bi-file-code me-1"></i> {{ activeTemplate.name }}</span>
         <span class="text-muted">→</span>
         <span class="badge bg-secondary"><i class="bi bi-diagram-3 me-1"></i> {{ getStructureName(selectedStructureId) }}</span>
@@ -664,7 +695,7 @@ onUnmounted(() => {
             </span>
           </transition>
         </div>
-        <div class="preview-content"><ReportPreview :html="renderedHtml" /></div>
+        <div class="preview-content"><ReportPreview :html="renderedHtml" :page-size="currentPageSize" /></div>
       </div>
     </div>
 

@@ -7,6 +7,7 @@ Chart.register(...registerables)
 
 const props = defineProps<{
   html: string
+  pageSize?: 'A4' | 'email'
 }>()
 
 // Strip <style> blocks from the HTML before sanitising; they are injected
@@ -217,7 +218,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="previewContainer" class="report-preview-wrapper" v-html="sanitizedHtml"></div>
+  <div
+    ref="previewContainer"
+    class="report-preview-wrapper"
+    :class="pageSize === 'email' ? 'preview-email' : 'preview-a4'"
+    v-html="sanitizedHtml"
+  ></div>
 </template>
 
 <style scoped>
@@ -405,5 +411,16 @@ onUnmounted(() => {
   margin: 0;
   padding: 0;
   border: none;
+}
+
+/* Email layout — 600px wide, no fixed height per "page" */
+.preview-email :deep(.report-page) {
+  width: 600px;
+  min-height: unset;
+  padding: 24px 32px;
+}
+
+.preview-email :deep(.page-separator-visual) {
+  width: 600px;
 }
 </style>

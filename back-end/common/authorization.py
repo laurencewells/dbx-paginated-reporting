@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, Request
 from common.config import is_development
 from repositories.images import ImagesRepository
 from repositories.projects import ProjectsRepository
+from repositories.schedules import SchedulesRepository
 from repositories.structures import StructuresRepository
 from repositories.templates import TemplatesRepository
 
@@ -40,10 +41,15 @@ def get_images_repo() -> ImagesRepository:
     return ImagesRepository()
 
 
+def get_schedules_repo() -> SchedulesRepository:
+    return SchedulesRepository()
+
+
 # Annotated aliases for cleaner route signatures
 CurrentUser = Annotated[str, Depends(get_user_email)]
 ImagesRepo = Annotated[ImagesRepository, Depends(get_images_repo)]
 ProjectsRepo = Annotated[ProjectsRepository, Depends(get_projects_repo)]
+SchedulesRepo = Annotated[SchedulesRepository, Depends(get_schedules_repo)]
 StructuresRepo = Annotated[StructuresRepository, Depends(get_structures_repo)]
 TemplatesRepo = Annotated[TemplatesRepository, Depends(get_templates_repo)]
 
@@ -163,3 +169,15 @@ async def check_template_project_access(
         await check_structure_project_access(
             template.structure_id, user_email, structures_repo, projects_repo
         )
+
+
+async def check_schedule_project_access(
+    schedule_id: UUID,
+    user_email: str,
+    schedules_repo: SchedulesRepository,
+    projects_repo: ProjectsRepository,
+) -> None:
+    """Look up a schedule's project and raise 403/423 if no access or locked."""
+    schedule = await schedules_repo.get_by_id(schedule_id)
+    if schedule:
+        await check_project_access_and_not_locked(schedule.project_id, user_email, projects_repo)

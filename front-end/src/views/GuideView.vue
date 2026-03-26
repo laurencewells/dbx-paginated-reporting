@@ -12,6 +12,7 @@ const sections = [
   { id: 'chart-struct',      label: 'Charts from Structs', icon: 'bi-bar-chart' },
   { id: 'conditional-styles',label: 'Conditional Styles',  icon: 'bi-palette' },
   { id: 'images',            label: 'Images',              icon: 'bi-images' },
+  { id: 'scheduling',        label: 'Scheduling',          icon: 'bi-clock-history' },
 ]
 
 // ── Inline syntax tags ────────────────────────────────────────────────────────
@@ -877,6 +878,125 @@ FROM procurement.suppliers`,
                 <li class="mb-2">Images are served with a 24-hour browser cache header, so they load quickly in previews.</li>
                 <li class="mb-2">Use the <strong>Rename</strong> button to give images descriptive names for easy identification.</li>
                 <li>For logos and icons, <strong>SVG</strong> or <strong>WebP</strong> formats give the best quality-to-size ratio.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Scheduling ── -->
+        <div v-if="activeSection === 'scheduling'">
+          <h4 class="section-title"><i class="bi bi-clock-history me-2 text-primary"></i>Scheduling</h4>
+          <p class="text-muted">Schedules automate report rendering on a recurring basis using standard cron expressions. The app's service principal executes the query and renders the template server-side — no user session is required.</p>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-lightning me-2 text-warning"></i>Quick start</div>
+            <div class="card-body">
+              <ol class="mb-0">
+                <li class="mb-2">Make sure the app's service principal has <code>SELECT</code> privilege on every Unity Catalog table used by the report's data structure.</li>
+                <li class="mb-2">Open <strong>Schedules</strong> from the sidebar (an active project must be selected).</li>
+                <li class="mb-2">Click <strong>New Schedule</strong>, choose a data structure and template, set a frequency, and click <strong>Create Schedule</strong>.</li>
+                <li class="mb-2">The schedule is registered immediately. Use the <i class="bi bi-play-fill"></i> button to trigger a test run without waiting for the next cron tick.</li>
+                <li>Switch to the <strong>Execution History</strong> tab and click <i class="bi bi-list-check"></i> on any schedule to review past runs and error messages.</li>
+              </ol>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-exclamation-triangle me-2 text-warning"></i>Service principal requirement</div>
+            <div class="card-body">
+              <p class="small mb-2">
+                Scheduled executions run in the background without a user session. The app queries Databricks using the <strong>service principal credentials</strong> configured in the environment (<code>DATABRICKS_CLIENT_ID</code> / <code>DATABRICKS_CLIENT_SECRET</code> or <code>DATABRICKS_TOKEN</code>).
+              </p>
+              <p class="small mb-0 text-danger fw-semibold">
+                If the service principal does not have <code>SELECT</code> on the relevant UC tables, every scheduled execution will fail with a permissions error.
+              </p>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-calendar-week me-2"></i>Cron expression format</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Schedules use standard 5-field cron syntax: <code>minute  hour  day  month  day_of_week</code>.</p>
+              <table class="table table-sm mb-3">
+                <thead class="table-dark">
+                  <tr><th>Expression</th><th>Meaning</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><code>0 9 * * *</code></td><td>Every day at 09:00</td></tr>
+                  <tr><td><code>0 9 * * 1-5</code></td><td>Weekdays (Mon–Fri) at 09:00</td></tr>
+                  <tr><td><code>0 8 * * 1</code></td><td>Every Monday at 08:00</td></tr>
+                  <tr><td><code>0 6 1 * *</code></td><td>1st of every month at 06:00</td></tr>
+                  <tr><td><code>*/15 * * * *</code></td><td>Every 15 minutes</td></tr>
+                  <tr><td><code>30 17 * * 5</code></td><td>Every Friday at 17:30</td></tr>
+                </tbody>
+              </table>
+              <p class="small text-muted mb-0">
+                The schedule builder's <strong>Simple</strong> mode generates a cron expression for you. Switch to <strong>Cron</strong> mode to enter one manually.
+              </p>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-list-check me-2"></i>Execution statuses</div>
+            <div class="card-body p-0">
+              <table class="table table-sm mb-0">
+                <thead class="table-dark">
+                  <tr><th>Status</th><th>Meaning</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><span class="badge bg-primary">running</span></td>
+                    <td>The execution is in progress. The history panel auto-refreshes every 10 seconds while a run is active.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="badge bg-success">success</span></td>
+                    <td>The report rendered without error.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="badge bg-danger">failed</span></td>
+                    <td>The run failed — check the <strong>Error</strong> column for details (missing UC privilege, bad Mustache syntax, warehouse timeout, etc.).</td>
+                  </tr>
+                  <tr>
+                    <td><span class="badge bg-secondary">pending</span></td>
+                    <td>Queued but not yet started.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header"><i class="bi bi-pencil me-2 text-primary"></i>Editing a schedule</div>
+                <div class="card-body">
+                  <p class="small mb-2">Click the <i class="bi bi-pencil"></i> button to change a schedule's <strong>name</strong>, <strong>cron expression</strong>, or <strong>active</strong> status.</p>
+                  <p class="small mb-2">The linked structure and template cannot be changed after creation — delete and recreate the schedule if you need a different template.</p>
+                  <p class="small mb-0 text-muted">Saving a cron change re-registers the APScheduler job immediately.</p>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header"><i class="bi bi-toggle-on me-2 text-success"></i>Active vs Inactive</div>
+                <div class="card-body">
+                  <p class="small mb-2">Inactive schedules are not registered with the scheduler — they will not fire automatically.</p>
+                  <p class="small mb-2">Toggling a schedule back to <strong>Active</strong> immediately re-registers the cron job with no further action required.</p>
+                  <p class="small mb-0 text-muted">The manual trigger button (<i class="bi bi-play-fill"></i>) works regardless of the active flag.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><i class="bi bi-info-circle me-2 text-info"></i>Tips &amp; limitations</div>
+            <div class="card-body">
+              <ul class="small mb-0">
+                <li class="mb-2">Schedules are scoped to a project — select the project in the sidebar before navigating to the Schedules page.</li>
+                <li class="mb-2">The scheduler runs in the same process as the FastAPI back-end. If the app restarts, all active schedules are automatically re-registered from the database on startup.</li>
+                <li class="mb-2">Execution history is paginated to the last 50 runs by default. Use the offset/limit query parameters on the API if you need older entries.</li>
+                <li class="mb-2">Only the project owner and shared members can create or modify schedules. The <code>check_schedule_project_access</code> guard applies the same access + lock rules as structures and templates.</li>
+                <li>Scheduled renders use a <strong>10,000 row limit</strong> on the SQL query — the same as a full PDF export.</li>
               </ul>
             </div>
           </div>

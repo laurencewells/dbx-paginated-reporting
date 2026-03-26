@@ -6,7 +6,7 @@ from common.logger import log as L
 from models.template import Template, TemplateCreate, TemplateUpdate
 
 
-_COLUMNS = "id, name, structure_id, html_content, created_at, updated_at"
+_COLUMNS = "id, name, structure_id, html_content, page_size, created_at, updated_at"
 
 
 class TemplatesRepository:
@@ -36,7 +36,7 @@ class TemplatesRepository:
             )
         else:
             result = await connector.execute_query(
-                "SELECT t.id, t.name, t.structure_id, t.html_content, t.created_at, t.updated_at "
+                "SELECT t.id, t.name, t.structure_id, t.html_content, t.page_size, t.created_at, t.updated_at "
                 "FROM templates t "
                 "JOIN structures s ON t.structure_id = s.id "
                 "WHERE s.project_id = :pid ORDER BY t.created_at",
@@ -55,13 +55,14 @@ class TemplatesRepository:
 
     async def create(self, data: TemplateCreate) -> Template:
         result = await self._require_connector().execute_query(
-            "INSERT INTO templates (name, structure_id, html_content) "
-            "VALUES (:name, :structure_id, :html_content) "
+            "INSERT INTO templates (name, structure_id, html_content, page_size) "
+            "VALUES (:name, :structure_id, :html_content, :page_size) "
             f"RETURNING {_COLUMNS}",
             {
                 "name": data.name,
                 "structure_id": str(data.structure_id),
                 "html_content": data.html_content,
+                "page_size": data.page_size,
             },
         )
         row = result.fetchone()
@@ -80,6 +81,9 @@ class TemplatesRepository:
         if data.html_content is not None:
             sets.append("html_content = :html_content")
             params["html_content"] = data.html_content
+        if data.page_size is not None:
+            sets.append("page_size = :page_size")
+            params["page_size"] = data.page_size
 
         if not sets:
             return await self.get_by_id(template_id)
@@ -114,6 +118,7 @@ class TemplatesRepository:
             name=row[1],
             structure_id=row[2],
             html_content=row[3],
-            created_at=row[4],
-            updated_at=row[5],
+            page_size=row[4],
+            created_at=row[5],
+            updated_at=row[6],
         )

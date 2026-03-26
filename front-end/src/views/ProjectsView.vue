@@ -3,6 +3,8 @@ import { ref, computed } from 'vue'
 import { useQueryClient } from '@tanstack/vue-query'
 import { useRouter } from 'vue-router'
 import { useProjectsStore } from '@/stores/projects'
+import { useDataStructuresStore } from '@/stores/dataStructures'
+import { useTemplatesStore } from '@/stores/templates'
 import { useToastStore } from '@/stores/toast'
 import {
   useListProjectsApiV1ProjectsGet,
@@ -16,11 +18,24 @@ import {
   getListSharesApiV1ProjectsProjectIdSharesGetQueryKey,
 } from '@/api/generated/projects/projects'
 import { useGetMe } from '@/api/generated/default/default'
+import { useQuery } from '@tanstack/vue-query'
+import axios from 'axios'
 import type { Project } from '@/api/generated'
+import CronDescription from '@/components/CronDescription.vue'
+
+interface ProjectReport {
+  template_id: string
+  template_name: string
+  page_size: string
+  structure_id: string
+  structure_name: string
+}
 
 const queryClient = useQueryClient()
 const router = useRouter()
 const projectsStore = useProjectsStore()
+const dataStructuresStore = useDataStructuresStore()
+const templatesStore = useTemplatesStore()
 const toastStore = useToastStore()
 
 const invalidateProjects = () =>
@@ -211,11 +226,54 @@ async function removeShare(shareId: string) {
   }
 }
 
+// -- Reports query ------------------------------------------------------------
+const reportsProjectId = computed(() => activeProject.value?.id ?? '')
+const { data: reports, isLoading: reportsLoading } = useQuery({
+  queryKey: computed(() => ['project-reports', reportsProjectId.value]),
+  queryFn: async () => {
+    const { data } = await axios.get<ProjectReport[]>(`/api/v1/projects/${reportsProjectId.value}/reports`)
+    return data
+  },
+  enabled: computed(() => !!activeProject.value),
+})
+
+// -- Schedules query ----------------------------------------------------------
+interface Schedule {
+  id: string
+  name: string
+  cron_expression: string
+  is_active: boolean
+}
+
+const { data: schedules, isLoading: schedulesLoading } = useQuery({
+  queryKey: computed(() => ['schedules', reportsProjectId.value]),
+  queryFn: async () => {
+    const { data } = await axios.get<Schedule[]>('/api/v1/schedules/', {
+      params: { project_id: reportsProjectId.value },
+    })
+    return data
+  },
+  enabled: computed(() => !!activeProject.value),
+})
+
 // -- Open project -------------------------------------------------------------
 function openProject(project: Project) {
   projectsStore.setActiveProject(project.id)
   router.push('/data-structures')
 }
+
+function openReport(report: ProjectReport) {
+  projectsStore.setActiveProject(reportsProjectId.value)
+  dataStructuresStore.setActiveStructure(report.structure_id)
+  templatesStore.setActiveTemplate(report.template_id)
+  router.push('/template-editor')
+}
+
+function openSchedules() {
+  projectsStore.setActiveProject(reportsProjectId.value)
+  router.push('/schedules')
+}
+
 </script>
 
 <template>
@@ -377,6 +435,82 @@ function openProject(project: Project) {
             </div>
           </div>
 
+          <!-- Reports -->
+          <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <h6 class="mb-0">
+                <i class="bi bi-file-earmark-text me-2"></i>
+                Reports
+              </h6>
+              <span class="badge bg-secondary">{{ reports?.length ?? 0 }}</span>
+            </div>
+            <div class="card-body p-0">
+              <div v-if="reportsLoading" class="text-center py-3">
+                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+              </div>
+              <div v-else-if="!reports?.length" class="text-muted small p-3">
+                No reports yet. Open the project and create a template to get started.
+              </div>
+              <div
+                v-for="report in reports"
+                :key="report.template_id"
+                class="report-item d-flex justify-content-between align-items-center px-3 py-2"
+                @click="openReport(report)"
+              >
+                <div class="overflow-hidden">
+                  <div class="fw-medium text-truncate small">{{ report.template_name }}</div>
+                  <div class="text-muted" style="font-size: 0.75rem">
+                    <i class="bi bi-diagram-3 me-1"></i>{{ report.structure_name }}
+                  </div>
+                </div>
+                <span
+                  class="badge flex-shrink-0 ms-2"
+                  :class="report.page_size === 'email' ? 'bg-info text-dark' : 'bg-light text-dark border'"
+                >{{ report.page_size }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Schedules -->
+          <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <h6 class="mb-0">
+                <i class="bi bi-clock-history me-2"></i>
+                Schedules
+              </h6>
+              <div class="d-flex align-items-center gap-2">
+                <span class="badge bg-secondary">{{ schedules?.length ?? 0 }}</span>
+                <button class="btn btn-sm btn-outline-primary" @click="openSchedules">
+                  <i class="bi bi-box-arrow-in-right me-1"></i>Manage
+                </button>
+              </div>
+            </div>
+            <div class="card-body p-0">
+              <div v-if="schedulesLoading" class="text-center py-3">
+                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+              </div>
+              <div v-else-if="!schedules?.length" class="text-muted small p-3">
+                No schedules yet. Click <strong>Manage</strong> to create one.
+              </div>
+              <div
+                v-for="schedule in schedules"
+                :key="schedule.id"
+                class="schedule-item d-flex justify-content-between align-items-center px-3 py-2"
+              >
+                <div class="overflow-hidden">
+                  <div class="fw-medium text-truncate small">{{ schedule.name }}</div>
+                  <div class="text-muted" style="font-size: 0.75rem">
+                    <i class="bi bi-clock me-1"></i><CronDescription :cron="schedule.cron_expression" />
+                  </div>
+                </div>
+                <span
+                  class="badge flex-shrink-0 ms-2 rounded-pill"
+                  :class="schedule.is_active ? 'bg-success' : 'bg-secondary'"
+                >{{ schedule.is_active ? 'Active' : 'Inactive' }}</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Sharing (hidden for global projects) -->
           <div v-if="!activeProject.is_global" class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
@@ -529,4 +663,17 @@ function openProject(project: Project) {
   color: #6c757d;
 }
 .empty-state i { font-size: 2.5rem; display: block; margin-bottom: 0.5rem; }
+
+.report-item {
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.report-item:last-child { border-bottom: none; }
+.report-item:hover { background: #f8f9fa; }
+
+.schedule-item {
+  border-bottom: 1px solid #eee;
+}
+.schedule-item:last-child { border-bottom: none; }
 </style>

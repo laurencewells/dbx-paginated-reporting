@@ -17,6 +17,7 @@ const navItems = [
   { path: '/template-editor', label: 'Template Editor', icon: 'bi-code-square' },
   { path: '/preview', label: 'Preview & Export', icon: 'bi-file-earmark-pdf' },
   { path: '/images', label: 'Images', icon: 'bi-images' },
+  { path: '/schedules', label: 'Schedules', icon: 'bi-clock-history' },
   { path: '/guide', label: 'Guide', icon: 'bi-book' },
 ]
 </script>

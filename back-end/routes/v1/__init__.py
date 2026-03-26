@@ -9,6 +9,7 @@ from .templates import router as templates_router
 from .discovery import router as discovery_router
 from .projects import router as projects_router
 from .images import router as images_router
+from .schedules import router as schedules_router
 
 router = APIRouter()
 
@@ -21,3 +22,4 @@ router.include_router(structures_router)
 router.include_router(templates_router)
 router.include_router(discovery_router)
 router.include_router(images_router)
+router.include_router(schedules_router)
