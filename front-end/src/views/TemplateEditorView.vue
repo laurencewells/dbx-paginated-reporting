@@ -6,6 +6,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { useToastStore } from '@/stores/toast'
 import ReportPreview from '@/components/ReportPreview.vue'
 import AgentChatPanel from '@/components/AgentChatPanel.vue'
+import PreviewExportModal from '@/components/PreviewExportModal.vue'
 import Mustache from 'mustache'
 import { html } from '@codemirror/lang-html'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -93,6 +94,7 @@ const showDeleteTemplateModal = ref(false)
 const showMustacheHelp = ref(false)
 const showStructureHint = ref(false)
 const showAgentChat = ref(false)
+const showExportModal = ref(false)
 
 const editorEl = ref<HTMLElement>()
 const cmView = ref<EditorView>()
@@ -581,6 +583,9 @@ onUnmounted(() => {
         <button class="btn btn-sm" :class="showAgentChat ? 'btn-primary' : 'btn-outline-primary'" @click="showAgentChat = !showAgentChat" title="AI Assistant">
           <i class="bi bi-robot me-1"></i> AI
         </button>
+        <button class="btn btn-sm btn-outline-danger" @click="showExportModal = true" title="Preview & Export">
+          <i class="bi bi-file-earmark-pdf me-1"></i> Export
+        </button>
       </div>
     </div>
 
@@ -736,6 +741,15 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Preview & Export Drawer -->
+    <PreviewExportModal
+      v-model:show="showExportModal"
+      :template-id="activeTemplate?.id ?? null"
+      :template-name="activeTemplate?.name ?? null"
+      :html-content="htmlContent"
+      :structure-name="activeStructure?.name ?? null"
+    />
 
     <!-- New Template Modal -->
     <div v-if="showNewTemplateModal" class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,0.5)">

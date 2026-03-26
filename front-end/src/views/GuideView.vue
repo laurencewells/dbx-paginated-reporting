@@ -428,7 +428,7 @@ FROM procurement.suppliers`,
                 <li class="mb-2">Give it a name (e.g. "Q1 Sales Reports") and click <strong>Create</strong>.</li>
                 <li class="mb-2">Click <strong>Open</strong> to set it as your active project — you'll see a banner in the sidebar.</li>
                 <li class="mb-2">Now go to <strong>Data Structures</strong> — any structures you create will automatically belong to this project.</li>
-                <li>Create templates linked to those structures and preview them as usual.</li>
+                <li>Create templates linked to those structures, then use the <strong>Export</strong> button in the Template Editor to preview and export PDF.</li>
               </ol>
             </div>
           </div>

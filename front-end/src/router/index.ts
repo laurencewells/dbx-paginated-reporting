@@ -27,11 +27,6 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/TemplateEditorView.vue'),
   },
   {
-    path: '/preview',
-    name: 'preview',
-    component: () => import('@/views/PreviewView.vue'),
-  },
-  {
     path: '/images',
     name: 'images',
     component: () => import('@/views/ImagesView.vue'),
