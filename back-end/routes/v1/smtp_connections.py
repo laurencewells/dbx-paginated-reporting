@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 
 from common.authorization import AdminUser, CurrentUser
+from common.exceptions import db_op
 from common.logger import log as L
 from models.smtp_connection import SmtpConnection, SmtpConnectionCreate, SmtpConnectionPublic, SmtpConnectionUpdate
 from repositories.smtp_connections import SmtpConnectionsRepository
@@ -46,20 +47,14 @@ def _delete_secret(scope: str, key: str) -> None:
 @router.get("/", response_model=List[SmtpConnectionPublic])
 async def list_smtp_connections(repo: SmtpRepo):
     """List all SMTP connections (readable by any authenticated user)."""
-    try:
+    async with db_op("list SMTP connections"):
         return await repo.get_all()
-    except RuntimeError:
-        L.exception("Failed to list SMTP connections")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
 
 @router.get("/{connection_id}", response_model=SmtpConnectionPublic)
 async def get_smtp_connection(connection_id: UUID, repo: SmtpRepo):
-    try:
+    async with db_op("get SMTP connection"):
         conn = await repo.get_by_id(connection_id)
-    except RuntimeError:
-        L.exception("Failed to get SMTP connection")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
     if not conn:
         raise HTTPException(status_code=404, detail="SMTP connection not found")
     return conn
@@ -132,11 +127,8 @@ async def update_smtp_connection(
             L.error(f"[SMTP] Failed to update secret for connection {connection_id}: {e}")
             raise HTTPException(status_code=503, detail="Failed to update credentials in secret store")
 
-    try:
+    async with db_op("update SMTP connection"):
         conn = await repo.update(connection_id, body)
-    except RuntimeError:
-        L.exception("Failed to update SMTP connection")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     if not conn:
         raise HTTPException(status_code=404, detail="SMTP connection not found")
@@ -159,11 +151,8 @@ async def delete_smtp_connection(
             detail="Cannot delete: this connection is used by one or more send lists",
         )
 
-    try:
+    async with db_op("delete SMTP connection"):
         deleted = await repo.delete(connection_id)
-    except RuntimeError:
-        L.exception("Failed to delete SMTP connection")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     if not deleted:
         raise HTTPException(status_code=404, detail="SMTP connection not found")

@@ -9,6 +9,7 @@ from common.authorization import (
     check_project_access,
     check_project_access_and_not_locked,
 )
+from common.exceptions import db_op
 from common.logger import log as L
 from models.email_send_list import EmailSendList, EmailSendListCreate, EmailSendListUpdate
 from repositories.email_send_lists import EmailSendListsRepository
@@ -43,11 +44,8 @@ async def list_send_lists(
     project_id: UUID = Query(...),
 ):
     await check_project_access(project_id, email, projects_repo)
-    try:
+    async with db_op("list send lists"):
         return await repo.get_all_for_project(project_id)
-    except RuntimeError:
-        L.exception("Failed to list send lists")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
 
 @router.get("/{send_list_id}", response_model=EmailSendList)
@@ -58,11 +56,8 @@ async def get_send_list(
     projects_repo: ProjectsRepo,
 ):
     await _check_send_list_project_access(send_list_id, email, repo, projects_repo)
-    try:
+    async with db_op("get send list"):
         send_list = await repo.get_by_id(send_list_id)
-    except RuntimeError:
-        L.exception("Failed to get send list")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
     if not send_list:
         raise HTTPException(status_code=404, detail="Send list not found")
     return send_list
@@ -76,11 +71,8 @@ async def create_send_list(
     projects_repo: ProjectsRepo,
 ):
     await check_project_access_and_not_locked(body.project_id, email, projects_repo)
-    try:
+    async with db_op("create send list"):
         return await repo.create(body, email)
-    except RuntimeError:
-        L.exception("Failed to create send list")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
 
 @router.put("/{send_list_id}", response_model=EmailSendList)
@@ -92,11 +84,8 @@ async def update_send_list(
     projects_repo: ProjectsRepo,
 ):
     await _check_send_list_project_access(send_list_id, email, repo, projects_repo)
-    try:
+    async with db_op("update send list"):
         send_list = await repo.update(send_list_id, body)
-    except RuntimeError:
-        L.exception("Failed to update send list")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
     if not send_list:
         raise HTTPException(status_code=404, detail="Send list not found")
     return send_list
@@ -110,10 +99,7 @@ async def delete_send_list(
     projects_repo: ProjectsRepo,
 ):
     await _check_send_list_project_access(send_list_id, email, repo, projects_repo)
-    try:
+    async with db_op("delete send list"):
         deleted = await repo.delete(send_list_id)
-    except RuntimeError:
-        L.exception("Failed to delete send list")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
     if not deleted:
         raise HTTPException(status_code=404, detail="Send list not found")

@@ -15,10 +15,14 @@ from common.authorization import (
     check_project_access_and_not_locked,
     check_schedule_project_access,
 )
+from common.email.sender import send_report_email, send_report_email_with_attachment
+from common.exceptions import db_op
 from common.factories.scheduler import scheduler_factory
 from common.logger import log as L
 from models.schedule import ExecutionStatus, Schedule, ScheduleCreate, ScheduleExecution, ScheduleUpdate
+from repositories.email_send_lists import EmailSendListsRepository
 from repositories.schedules import SchedulesRepository
+from repositories.smtp_connections import SmtpConnectionsRepository
 from services.report_renderer import build_html_document, render_charts_as_svg, render_report, render_report_pdf
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
@@ -77,8 +81,54 @@ def _remove_job(schedule_id: UUID) -> None:
         pass
 
 
+async def _send_to_one_list(
+    schedule: Schedule,
+    send_list,
+    smtp_conn,
+    html_body: str,
+    pdf_bytes: Optional[bytes],
+) -> tuple[str, bool]:
+    """Send to a single list. Returns (message, has_error)."""
+    try:
+        if pdf_bytes is not None:
+            await send_report_email_with_attachment(
+                provider=smtp_conn.provider,
+                smtp_host=smtp_conn.smtp_host,
+                smtp_port=smtp_conn.smtp_port,
+                username=smtp_conn.username,
+                secret_scope=smtp_conn.secret_scope,
+                secret_key=smtp_conn.secret_key,
+                from_email=smtp_conn.from_email,
+                recipients=send_list.emails,
+                subject=f"Scheduled Report: {schedule.name}",
+                pdf_bytes=pdf_bytes,
+                filename=f"{schedule.name}.pdf",
+            )
+        else:
+            await send_report_email(
+                provider=smtp_conn.provider,
+                smtp_host=smtp_conn.smtp_host,
+                smtp_port=smtp_conn.smtp_port,
+                username=smtp_conn.username,
+                secret_scope=smtp_conn.secret_scope,
+                secret_key=smtp_conn.secret_key,
+                from_email=smtp_conn.from_email,
+                recipients=send_list.emails,
+                subject=f"Scheduled Report: {schedule.name}",
+                html_body=html_body,
+            )
+        return f"Emails sent: {send_list.name} ({len(send_list.emails)} recipient(s))", False
+    except Exception as e:
+        L.error(f"[Scheduler] Email failed for send list {send_list.name}: {e}")
+        return f"Email failed: {send_list.name} — {e}", True
+
+
 async def _send_to_lists(
-    schedule: Schedule, html_body: str, pdf_bytes: Optional[bytes] = None
+    schedule: Schedule,
+    html_body: str,
+    send_lists_repo: EmailSendListsRepository,
+    smtp_repo: SmtpConnectionsRepository,
+    pdf_bytes: Optional[bytes] = None,
 ) -> tuple[str, bool]:
     """Send the rendered report to all attached send lists.
 
@@ -90,12 +140,6 @@ async def _send_to_lists(
     if not schedule.send_list_ids:
         return "", False
 
-    from repositories.email_send_lists import EmailSendListsRepository
-    from repositories.smtp_connections import SmtpConnectionsRepository
-    from common.email.sender import send_report_email, send_report_email_with_attachment
-
-    send_lists_repo = EmailSendListsRepository()
-    smtp_repo = SmtpConnectionsRepository()
     send_lists = await send_lists_repo.get_by_ids(schedule.send_list_ids)
 
     lines: list[str] = []
@@ -108,44 +152,21 @@ async def _send_to_lists(
             has_failures = True
             lines.append(f"Email failed: {sl.name} — connection not found")
             continue
-        try:
-            if pdf_bytes is not None:
-                await send_report_email_with_attachment(
-                    provider=conn.provider,
-                    smtp_host=conn.smtp_host,
-                    smtp_port=conn.smtp_port,
-                    username=conn.username,
-                    secret_scope=conn.secret_scope,
-                    secret_key=conn.secret_key,
-                    from_email=conn.from_email,
-                    recipients=sl.emails,
-                    subject=f"Scheduled Report: {schedule.name}",
-                    pdf_bytes=pdf_bytes,
-                    filename=f"{schedule.name}.pdf",
-                )
-            else:
-                await send_report_email(
-                    provider=conn.provider,
-                    smtp_host=conn.smtp_host,
-                    smtp_port=conn.smtp_port,
-                    username=conn.username,
-                    secret_scope=conn.secret_scope,
-                    secret_key=conn.secret_key,
-                    from_email=conn.from_email,
-                    recipients=sl.emails,
-                    subject=f"Scheduled Report: {schedule.name}",
-                    html_body=html_body,
-                )
-            lines.append(f"Emails sent: {sl.name} ({len(sl.emails)} recipient(s))")
-        except Exception as e:
+        message, error = await _send_to_one_list(schedule, sl, conn, html_body, pdf_bytes)
+        lines.append(message)
+        if error:
             has_failures = True
-            L.error(f"[Scheduler] Email failed for send list {sl.name}: {e}")
-            lines.append(f"Email failed: {sl.name} — {e}")
 
     return "\n".join(lines), has_failures
 
 
-async def _execute_report(execution_id: UUID, schedule: Schedule, repo: SchedulesRepository) -> None:
+async def _execute_report(
+    execution_id: UUID,
+    schedule: Schedule,
+    repo: SchedulesRepository,
+    send_lists_repo: EmailSendListsRepository,
+    smtp_repo: SmtpConnectionsRepository,
+) -> None:
     """Core report execution logic — called inside a timeout wrapper."""
     html_body, template = await render_report(schedule.template_id)
     if template.page_size == "email":
@@ -154,10 +175,10 @@ async def _execute_report(execution_id: UUID, schedule: Schedule, repo: Schedule
         if not is_markdown:
             body = render_charts_as_svg(body)
         full_html = build_html_document(body, template.name, include_charts=False, is_markdown=is_markdown)
-        email_summary, email_failures = await _send_to_lists(schedule, full_html)
+        email_summary, email_failures = await _send_to_lists(schedule, full_html, send_lists_repo, smtp_repo)
     else:
         pdf_bytes, _ = await render_report_pdf(schedule.template_id)
-        email_summary, email_failures = await _send_to_lists(schedule, html_body or "", pdf_bytes=pdf_bytes)
+        email_summary, email_failures = await _send_to_lists(schedule, html_body or "", send_lists_repo, smtp_repo, pdf_bytes=pdf_bytes)
 
     status = ExecutionStatus.failed if email_failures else ExecutionStatus.success
     await repo.update_execution(execution_id, status, error_message=email_summary or None)
@@ -165,7 +186,7 @@ async def _execute_report(execution_id: UUID, schedule: Schedule, repo: Schedule
 
 
 async def _run_scheduled_report(schedule_id: UUID) -> None:
-    """APScheduler job function."""
+    """APScheduler job function. Repos are instantiated directly — Depends() is unavailable outside a request context."""
     repo = SchedulesRepository()
     schedule = await repo.get_by_id(schedule_id)
     if not schedule or not schedule.is_active:
@@ -174,9 +195,15 @@ async def _run_scheduled_report(schedule_id: UUID) -> None:
     execution = await repo.create_execution(schedule_id)
     L.info(f"[Scheduler] Running schedule {schedule_id} (execution {execution.id})")
 
+    send_lists_repo = EmailSendListsRepository()
+    smtp_repo = SmtpConnectionsRepository()
+
     timeout = int(os.getenv("SCHEDULE_JOB_TIMEOUT_SECONDS", "300"))
     try:
-        await asyncio.wait_for(_execute_report(execution.id, schedule, repo), timeout=timeout)
+        await asyncio.wait_for(
+            _execute_report(execution.id, schedule, repo, send_lists_repo, smtp_repo),
+            timeout=timeout,
+        )
     except asyncio.TimeoutError:
         L.error(f"[Scheduler] Execution {execution.id} timed out after {timeout}s")
         await repo.update_execution(
@@ -199,11 +226,8 @@ async def list_schedules(
     project_id: UUID = Query(...),
 ):
     await check_project_access(project_id, email, projects_repo)
-    try:
+    async with db_op("list schedules"):
         return await repo.get_all_for_project(project_id)
-    except RuntimeError:
-        L.exception("Failed to list schedules")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
 
 @router.get("/executions", response_model=List[ScheduleExecution])
@@ -217,11 +241,8 @@ async def list_all_executions(
 ):
     """All executions across every schedule in a project, newest first."""
     await check_project_access(project_id, email, projects_repo)
-    try:
+    async with db_op("list all executions"):
         return await repo.get_all_executions_for_project(project_id, limit=limit, offset=offset)
-    except RuntimeError:
-        L.exception("Failed to list all executions")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
 
 @router.get("/{schedule_id}", response_model=Schedule)
@@ -232,11 +253,8 @@ async def get_schedule(
     projects_repo: ProjectsRepo,
 ):
     await check_schedule_project_access(schedule_id, email, repo, projects_repo)
-    try:
+    async with db_op("get schedule"):
         schedule = await repo.get_by_id(schedule_id)
-    except RuntimeError:
-        L.exception("Failed to get schedule")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
     return schedule
@@ -256,11 +274,8 @@ async def create_schedule(
         raise HTTPException(status_code=422, detail=str(e))
 
     await check_project_access_and_not_locked(body.project_id, email, projects_repo)
-    try:
+    async with db_op("create schedule"):
         schedule = await repo.create(body, email)
-    except RuntimeError:
-        L.exception("Failed to create schedule")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     _register_job(schedule)
     return schedule
@@ -281,11 +296,8 @@ async def update_schedule(
             raise HTTPException(status_code=422, detail=str(e))
 
     await check_schedule_project_access(schedule_id, email, repo, projects_repo)
-    try:
+    async with db_op("update schedule"):
         schedule = await repo.update(schedule_id, body)
-    except RuntimeError:
-        L.exception("Failed to update schedule")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     if not schedule:
         if body.expected_updated_at is not None:
@@ -309,11 +321,8 @@ async def delete_schedule(
     projects_repo: ProjectsRepo,
 ):
     await check_schedule_project_access(schedule_id, email, repo, projects_repo)
-    try:
+    async with db_op("delete schedule"):
         deleted = await repo.delete(schedule_id)
-    except RuntimeError:
-        L.exception("Failed to delete schedule")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
     if not deleted:
         raise HTTPException(status_code=404, detail="Schedule not found")
     _remove_job(schedule_id)
@@ -329,11 +338,8 @@ async def list_executions(
     offset: int = Query(0, ge=0),
 ):
     await check_schedule_project_access(schedule_id, email, repo, projects_repo)
-    try:
+    async with db_op("list executions"):
         return await repo.get_executions(schedule_id, limit=limit, offset=offset)
-    except RuntimeError:
-        L.exception("Failed to list executions")
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
 
 @router.post("/{schedule_id}/trigger", status_code=202)

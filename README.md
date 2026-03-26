@@ -31,7 +31,8 @@ This application enables users to:
 | **Orval** | Auto-generated Vue Query composables from OpenAPI spec |
 | **Axios** | HTTP client (used by Orval-generated code) |
 | **Mustache.js** | Template rendering with data binding |
-| **Chart.js + vue-chartjs** | Interactive charts |
+| **marked** | Markdown-to-HTML conversion for Markdown-type templates |
+| **SVG chart rendering** | Inline SVG bar and pie charts (no canvas — works in PDF, email, and browser) |
 | **html2pdf.js** | Client-side PDF generation |
 
 ### Back-End
@@ -259,6 +260,13 @@ Useful tools in the editor:
 
 Templates auto-save as you type. Use **Save** to save manually, or **Delete** to remove a template.
 
+#### Template types
+
+When creating a template, choose between **HTML** (default) or **Markdown**:
+
+- **HTML** — full Bootstrap 5 layout, custom CSS, `.report-page` divs, and page break control. Best for complex multi-column designs.
+- **Markdown** — write GitHub Flavoured Markdown (headings, bold, tables, lists) combined with Mustache syntax. The server and preview both render Markdown via `marked`. Best for text-heavy reports where layout complexity is low. Inline HTML (including page-break divs) is supported inside Markdown templates.
+
 #### Mustache basics
 
 ```html
@@ -321,7 +329,8 @@ The **Guide** page (accessible from the sidebar) contains a full reference for:
 - Projects — ownership, sharing, locking, and permissions
 - Mustache syntax patterns
 - Flat tables, struct fields, and arrays of structs
-- Building bar and pie charts from Unity Catalog data
+- Markdown templates — GFM syntax, tables, and Mustache integration
+- Building bar and pie charts from Unity Catalog data (inline SVG — works in PDF, email, and browser)
 - Conditional styling using SQL-derived boolean columns
 - Images — uploading, referencing, and limitations
 

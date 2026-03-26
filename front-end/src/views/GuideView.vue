@@ -9,9 +9,10 @@ const sections = [
   { id: 'flat-table',        label: 'Flat Table',          icon: 'bi-table' },
   { id: 'struct',            label: 'Struct Fields',       icon: 'bi-braces-asterisk' },
   { id: 'array-struct',      label: 'Array of Structs',    icon: 'bi-list-nested' },
-  { id: 'chart-struct',      label: 'Charts from Structs', icon: 'bi-bar-chart', experimental: true },
+  { id: 'chart-struct',      label: 'Charts from Structs', icon: 'bi-bar-chart' },
   { id: 'conditional-styles',label: 'Conditional Styles',  icon: 'bi-palette' },
   { id: 'images',            label: 'Images',              icon: 'bi-images' },
+  { id: 'markdown',          label: 'Markdown Templates',  icon: 'bi-markdown' },
   { id: 'scheduling',        label: 'Scheduling',          icon: 'bi-clock-history' },
 ]
 
@@ -326,6 +327,30 @@ FROM procurement.suppliers`,
 </div>
 {{/rows}}`,
 
+  markdown_basic: `# {{title}}
+
+Generated: {{date}}
+
+> **Total rows:** {{_total}}
+
+---
+
+{{#rows}}
+## {{name}}
+
+| Field | Value |
+|-------|-------|
+| Status | {{status}} |
+| Amount | {{amount}} |
+
+<div style="page-break-after: always"></div>
+{{/rows}}`,
+
+  markdown_table: `| Name | Department | Status |
+|------|-----------|--------|
+{{#rows}}| {{name}} | {{department}} | {{status}} |
+{{/rows}}`,
+
   image_basic: `<img src="/api/v1/images/IMAGE_ID/data" alt="Description" />`,
 
   image_header: `<div class="report-page">
@@ -407,7 +432,6 @@ FROM procurement.suppliers`,
             >
               <i :class="['bi', s.icon, 'me-2']"></i>
               {{ s.label }}
-              <span v-if="s.experimental" class="badge-experimental ms-auto">Experimental</span>
             </button>
           </div>
         </div>
@@ -652,9 +676,9 @@ FROM procurement.suppliers`,
 
         <!-- ── Charts from Structs ── -->
         <div v-if="activeSection === 'chart-struct'">
-          <h4 class="section-title"><i class="bi bi-bar-chart me-2 text-primary"></i>Charts from Struct Columns <span class="badge-experimental ms-2">Experimental</span></h4>
-          <div class="alert alert-warning py-2 mb-3">
-            <i class="bi bi-flask me-2"></i>Charts are experimental — output quality may vary across PDF, email, and browser preview.
+          <h4 class="section-title"><i class="bi bi-bar-chart me-2 text-primary"></i>Charts from Struct Columns</h4>
+          <div class="alert alert-success py-2 mb-3">
+            <i class="bi bi-check-circle me-2"></i>Charts render as <strong>inline SVG</strong> — they display identically in the browser preview, PDF export, and email delivery. No JavaScript required at render time.
           </div>
           <p class="text-muted">Charts read comma-separated strings from <code>data-labels</code> and <code>data-values</code> attributes. There are three ways to feed data in.</p>
 
@@ -883,6 +907,91 @@ FROM procurement.suppliers`,
                 <li class="mb-2">Use the <strong>Rename</strong> button to give images descriptive names for easy identification.</li>
                 <li>For logos and icons, <strong>SVG</strong> or <strong>WebP</strong> formats give the best quality-to-size ratio.</li>
               </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Markdown Templates ── -->
+        <div v-if="activeSection === 'markdown'">
+          <h4 class="section-title"><i class="bi bi-markdown me-2 text-primary"></i>Markdown Templates</h4>
+          <p class="text-muted">Markdown templates let you write reports in GitHub Flavoured Markdown (GFM) combined with Mustache syntax. The editor switches to a Markdown language mode, and both the live preview and server-side renders parse the Markdown before display.</p>
+
+          <div class="row g-4 mb-4">
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header"><i class="bi bi-check-circle me-2 text-success"></i>When to use Markdown</div>
+                <div class="card-body">
+                  <ul class="small mb-0">
+                    <li class="mb-2">Text-heavy reports — summaries, memos, executive briefings</li>
+                    <li class="mb-2">Simple tables from query data without custom styling</li>
+                    <li class="mb-2">Reports where you want to write content quickly without HTML boilerplate</li>
+                    <li>Situations where the AI assistant's output is primarily prose</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header"><i class="bi bi-x-circle me-2 text-danger"></i>When to use HTML instead</div>
+                <div class="card-body">
+                  <ul class="small mb-0">
+                    <li class="mb-2">Multi-column layouts with Bootstrap grid</li>
+                    <li class="mb-2">Precise per-page styling with custom CSS</li>
+                    <li class="mb-2">KPI tiles, charts, or complex badge styling</li>
+                    <li>Reports that require <code>.report-page</code> divs with controlled page breaks</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-braces me-2"></i>Mustache works the same way</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">All Mustache syntax — <code>{{ t.variable }}</code>, <code>{{ t.section }}</code>, <code>{{ t.inverted }}</code>, dot notation — is evaluated first, then the result is parsed as Markdown. The <code>{{ t.rows_open }}</code> / <code>{{ t.rows_close }}</code> pattern still applies.</p>
+              <pre class="code-block">{{ code.markdown_basic }}</pre>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-table me-2"></i>GFM tables with dynamic rows</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Place the <code>{{ t.rows_open }}</code> loop inside the table body. Each iteration appends a row. Note: the closing <code>{{ t.rows_close }}</code> must sit on its own line.</p>
+              <pre class="code-block">{{ code.markdown_table }}</pre>
+              <div class="alert alert-info mt-3 mb-0 py-2">
+                <i class="bi bi-info-circle me-2"></i>
+                Do not put blank lines between the pipe rows — GFM interprets a blank line as the end of the table.
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-file-break me-2"></i>Page breaks</div>
+            <div class="card-body">
+              <p class="small text-muted mb-2">Inline HTML is allowed inside Markdown templates. Use a div with <code>page-break-after</code> to force a new page in PDF exports and print:</p>
+              <pre class="code-block">&lt;div style="page-break-after: always"&gt;&lt;/div&gt;</pre>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><i class="bi bi-list-check me-2"></i>Supported Markdown features</div>
+            <div class="card-body p-0">
+              <table class="table table-sm mb-0">
+                <thead class="table-dark">
+                  <tr><th>Syntax</th><th>Output</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><code># Heading</code> / <code>## H2</code> / <code>### H3</code></td><td>Heading elements</td></tr>
+                  <tr><td><code>**bold**</code> / <code>*italic*</code></td><td>Strong / emphasis</td></tr>
+                  <tr><td><code>- item</code> / <code>1. item</code></td><td>Unordered / ordered lists</td></tr>
+                  <tr><td><code>- [x] done</code> / <code>- [ ] todo</code></td><td>Task list checkboxes</td></tr>
+                  <tr><td><code>&gt; blockquote</code></td><td>Callout / pull-quote block</td></tr>
+                  <tr><td><code>`code`</code> / <code>```block```</code></td><td>Inline / fenced code</td></tr>
+                  <tr><td><code>| Col | Col |</code> + header separator</td><td>GFM table</td></tr>
+                  <tr><td><code>---</code></td><td>Horizontal rule</td></tr>
+                  <tr><td>Inline HTML</td><td>Passed through (page breaks, images, etc.)</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

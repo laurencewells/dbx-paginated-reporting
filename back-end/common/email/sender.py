@@ -22,6 +22,10 @@ from common.logger import log as L
 _SMTP_TIMEOUT_SECONDS = 30
 
 
+async def _run_blocking(func, *args):
+    return await asyncio.get_event_loop().run_in_executor(None, func, *args)
+
+
 def _get_secret(scope: str, key: str) -> str:
     from common.authentication.workspace import WorkspaceAuthentication
     client = WorkspaceAuthentication().client
@@ -127,19 +131,11 @@ async def send_report_email(
 ) -> None:
     """Send the rendered report as an inline HTML email body."""
     credential = _get_secret(secret_scope, secret_key)
-    loop = asyncio.get_event_loop()
     if provider == "sendgrid":
-        await loop.run_in_executor(
-            None, _send_html_sendgrid_blocking,
-            credential, from_email, recipients, subject, html_body,
-        )
+        await _run_blocking(_send_html_sendgrid_blocking, credential, from_email, recipients, subject, html_body)
         L.info(f"[Email] Sent HTML body to {len(recipients)} recipient(s) via SendGrid API")
     else:
-        await loop.run_in_executor(
-            None, _send_html_blocking,
-            smtp_host, smtp_port, username, credential,
-            from_email, recipients, subject, html_body,
-        )
+        await _run_blocking(_send_html_blocking, smtp_host, smtp_port, username, credential, from_email, recipients, subject, html_body)
         L.info(f"[Email] Sent HTML body to {len(recipients)} recipient(s) via {smtp_host}")
 
 
@@ -158,17 +154,9 @@ async def send_report_email_with_attachment(
 ) -> None:
     """Send the rendered report as a PDF attachment."""
     credential = _get_secret(secret_scope, secret_key)
-    loop = asyncio.get_event_loop()
     if provider == "sendgrid":
-        await loop.run_in_executor(
-            None, _send_attachment_sendgrid_blocking,
-            credential, from_email, recipients, subject, pdf_bytes, filename,
-        )
+        await _run_blocking(_send_attachment_sendgrid_blocking, credential, from_email, recipients, subject, pdf_bytes, filename)
         L.info(f"[Email] Sent PDF attachment ({filename}) to {len(recipients)} recipient(s) via SendGrid API")
     else:
-        await loop.run_in_executor(
-            None, _send_attachment_blocking,
-            smtp_host, smtp_port, username, credential,
-            from_email, recipients, subject, pdf_bytes, filename,
-        )
+        await _run_blocking(_send_attachment_blocking, smtp_host, smtp_port, username, credential, from_email, recipients, subject, pdf_bytes, filename)
         L.info(f"[Email] Sent PDF attachment ({filename}) to {len(recipients)} recipient(s) via {smtp_host}")
