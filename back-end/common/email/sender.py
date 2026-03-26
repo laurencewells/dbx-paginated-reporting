@@ -23,7 +23,8 @@ _SMTP_TIMEOUT_SECONDS = 30
 
 
 async def _run_blocking(func, *args):
-    return await asyncio.get_event_loop().run_in_executor(None, func, *args)
+    # Run blocking call in a thread without using deprecated get_event_loop()
+    return await asyncio.to_thread(func, *args)
 
 
 def _get_secret(scope: str, key: str) -> str:
