@@ -53,7 +53,7 @@ class ScheduleCreate(BaseModel):
 class ScheduleUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    name: Optional[str] = Field(None, max_length=200)
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
     cron_expression: Optional[str] = None
     is_active: Optional[bool] = None
     expected_updated_at: Optional[datetime] = None

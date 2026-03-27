@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Request
 
 from common.config import is_development
+from common.logger import log as L
 from repositories.images import ImagesRepository
 from repositories.projects import ProjectsRepository
 from repositories.schedules import SchedulesRepository
@@ -22,6 +23,7 @@ def get_user_email(request: Request) -> str:
     if not email and is_development():
         email = "dev.user@databricks.com"
     if not email:
+        L.warning("auth: 401 — X-Forwarded-Email header missing, cannot determine current user")
         raise HTTPException(status_code=401, detail="Unable to determine current user")
     return email
 
@@ -35,6 +37,7 @@ def is_admin(user_email: str) -> bool:
 async def require_admin(email: Annotated[str, Depends(get_user_email)]) -> str:
     """FastAPI dependency — raises 403 if the current user is not an admin."""
     if not is_admin(email):
+        L.warning("auth: 403 admin required — user=%s", email)
         raise HTTPException(status_code=403, detail="Admin access required")
     return email
 
@@ -77,6 +80,7 @@ async def check_project_not_locked(project_id: UUID, repo: ProjectsRepository) -
     """Raise 423 if the given project exists and is locked."""
     project = await repo.get_by_id(project_id)
     if project and project.is_locked:
+        L.warning("auth: 423 project locked — project_id=%s", project_id)
         raise HTTPException(status_code=423, detail="Project is locked")
 
 
@@ -86,6 +90,7 @@ async def check_project_access(
     """Raise 403 if the user has no access to the project."""
     has_access = await repo.user_has_access(project_id, user_email)
     if not has_access:
+        L.warning("auth: 403 access denied — user=%s project_id=%s", user_email, project_id)
         raise HTTPException(status_code=403, detail="Access denied")
 
 
@@ -95,8 +100,10 @@ async def check_project_access_and_not_locked(
     """Raise 403/423 if the user has no access or the project is locked."""
     has_access, is_locked = await repo.get_access_and_lock_status(project_id, user_email)
     if not has_access:
+        L.warning("auth: 403 access denied — user=%s project_id=%s", user_email, project_id)
         raise HTTPException(status_code=403, detail="Access denied")
     if is_locked:
+        L.warning("auth: 423 project locked — user=%s project_id=%s", user_email, project_id)
         raise HTTPException(status_code=423, detail="Project is locked")
 
 
@@ -137,8 +144,10 @@ async def check_structure_project_access(
         structure.project_id, user_email
     )
     if not has_access:
+        L.warning("auth: 403 access denied — user=%s structure_id=%s", user_email, structure_id)
         raise HTTPException(status_code=403, detail="Access denied")
     if is_locked:
+        L.warning("auth: 423 project locked — user=%s structure_id=%s", user_email, structure_id)
         raise HTTPException(status_code=423, detail="Project is locked")
 
 

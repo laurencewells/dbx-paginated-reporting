@@ -246,9 +246,9 @@ class TestRunQuery:
         assert isinstance(rows[0]["active"], bool)
 
     @pytest.mark.asyncio
-    async def test_none_dataframe_returns_empty(self):
+    async def test_none_dataframe_raises(self):
+        """Connector returning None is a silent failure — should raise, not swallow."""
         svc = _make_svc()
         svc.sql_connector.run_sql_statement_async = AsyncMock(return_value=None)
-        rows, cols = await svc._run_query("SELECT 1")
-        assert rows == []
-        assert cols == []
+        with pytest.raises(RuntimeError, match="Query returned no result"):
+            await svc._run_query("SELECT 1")

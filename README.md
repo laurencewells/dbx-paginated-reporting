@@ -282,7 +282,7 @@ When creating a template, choose between **HTML** (default) or **Markdown**:
 {{#is_overdue}}<span class="badge bg-danger">Overdue</span>{{/is_overdue}}
 ```
 
-Use `.report-page` divs and `<!-- PAGE BREAK -->` comments (available in the Insert Component palette) to control pagination.
+Use `.report-page` divs and pagination magic commands (available in the Insert Component palette and documented in the Guide) to control pagination.
 
 ### Step 3 — Upload Images (optional)
 
@@ -335,6 +335,7 @@ The **Guide** page (accessible from the sidebar) contains a full reference for:
 - Building bar and pie charts from Unity Catalog data (inline SVG — works in PDF, email, and browser)
 - Conditional styling using SQL-derived boolean columns
 - Images — uploading, referencing, and limitations
+- **Pagination Magic** — page breaks, page-break-before, no-break, data-break-after, repeating headers/footers, and multi-column layouts
 
 ---
 

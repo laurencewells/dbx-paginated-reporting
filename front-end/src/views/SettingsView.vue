@@ -18,6 +18,7 @@ const isAdmin = computed(() => me.value?.is_admin ?? false)
 
 const providerOptions = [
   { value: 'gsuite', label: 'Google Workspace (Gmail)' },
+  { value: 'smtp', label: 'Standard SMTP' },
   { value: 'sendgrid', label: 'SendGrid' },
 ]
 

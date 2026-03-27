@@ -23,7 +23,14 @@ export function parseChartData(el: Element): { labels: string[]; values: number[
   const rawValues = v.split(',').map(s => parseFloat(s.trim()))
   const pairs = rawLabels
     .map((label, i) => ({ label, value: rawValues[i] }))
-    .filter(p => p.label && !isNaN(p.value))
+    .filter(p => {
+      if (!p.label) return false
+      if (isNaN(p.value)) {
+        console.warn('[chartSvg] dropping non-numeric value for label:', p.label, '— check data-values attribute')
+        return false
+      }
+      return true
+    })
 
   const opts: ChartOpts = {}
   const title = el.getAttribute('data-title')
@@ -103,6 +110,50 @@ async function svgFromSpec(spec: TopLevelSpec): Promise<string> {
   return view.toSVG()
 }
 
+/**
+ * Post-process rendered HTML to apply pagination layout magic:
+ * - Clone .report-global-header / .report-global-footer into every .report-page
+ * - Inject .page-break divs at data-break-after="N" intervals
+ *
+ * Must be called after v-html / innerHTML is set and before renderChartsAsSvg,
+ * so that chart divs inside cloned headers are also rendered.
+ */
+export function processLayoutMagic(container: Element): void {
+  // 1. Clone global header/footer into every .report-page
+  const globalHeader = container.querySelector('.report-global-header')
+  const globalFooter = container.querySelector('.report-global-footer')
+  const pages = Array.from(container.querySelectorAll<Element>('.report-page'))
+
+  if (pages.length > 0) {
+    if (globalHeader) {
+      const headerHTML = globalHeader.outerHTML
+      globalHeader.remove()
+      pages.forEach(page => page.insertAdjacentHTML('afterbegin', headerHTML))
+    }
+    if (globalFooter) {
+      const footerHTML = globalFooter.outerHTML
+      globalFooter.remove()
+      pages.forEach(page => page.insertAdjacentHTML('beforeend', footerHTML))
+    }
+  }
+
+  // 2. Apply data-break-after="N" — inject .page-break divs after every N children
+  const breakAfterEls = Array.from(container.querySelectorAll<Element>('[data-break-after]'))
+  breakAfterEls.forEach(el => {
+    const n = parseInt(el.getAttribute('data-break-after') ?? '0', 10)
+    if (!n || n <= 0) return
+    // Snapshot children before mutating so indices remain stable
+    const children = Array.from(el.children)
+    children.forEach((child, i) => {
+      if ((i + 1) % n === 0 && i < children.length - 1) {
+        const breakDiv = document.createElement('div')
+        breakDiv.className = 'page-break'
+        child.after(breakDiv)
+      }
+    })
+  })
+}
+
 export async function renderChartsAsSvg(container: Element): Promise<void> {
   const barEls = Array.from(container.querySelectorAll('.report-bar-chart'))
   const pieEls = Array.from(container.querySelectorAll('.report-pie-chart'))
@@ -114,8 +165,9 @@ export async function renderChartsAsSvg(container: Element): Promise<void> {
       if (!labels.length) return
       try {
         el.innerHTML = await svgFromSpec(buildBarSpec(labels, values, opts))
-      } catch {
-        // Leave the div empty — the chart simply won't render
+      } catch (err) {
+        console.error('[chartSvg] bar chart render failed:', err, el.outerHTML.slice(0, 200))
+        el.innerHTML = '<div style="padding:1rem;color:#856404;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;font-size:0.85rem;">⚠ Chart failed to render — check data-labels / data-values attributes</div>'
       }
     }),
     ...pieEls.map(async el => {
@@ -123,8 +175,9 @@ export async function renderChartsAsSvg(container: Element): Promise<void> {
       if (!labels.length) return
       try {
         el.innerHTML = await svgFromSpec(buildPieSpec(labels, values, opts))
-      } catch {
-        // Leave the div empty — the chart simply won't render
+      } catch (err) {
+        console.error('[chartSvg] pie chart render failed:', err, el.outerHTML.slice(0, 200))
+        el.innerHTML = '<div style="padding:1rem;color:#856404;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;font-size:0.85rem;">⚠ Chart failed to render — check data-labels / data-values attributes</div>'
       }
     }),
   ])

@@ -149,10 +149,12 @@ async def render_template_html(
     """Server-side render to HTML — for testing scheduled output."""
     await check_template_read_access(template_id, email, repo, structures_repo, projects_repo)
     try:
-        from services.report_renderer import build_html_document, inline_images, render_report
+        from services.report_renderer import build_html_document, inline_images, render_charts_as_svg, render_report
         body, template = await render_report(template_id)
         body = await inline_images(body)
-        html = build_html_document(body, template.name, include_charts=True)
+        body = render_charts_as_svg(body)
+        is_markdown = template.template_type == "markdown"
+        html = build_html_document(body, template.name, is_markdown=is_markdown)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:

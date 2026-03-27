@@ -15,7 +15,7 @@ from common.authorization import (
     check_project_access_and_not_locked,
     check_schedule_project_access,
 )
-from common.email.sender import send_report_email, send_report_email_with_attachment
+from common.email.factory import get_provider
 from common.exceptions import db_op
 from common.factories.scheduler import scheduler_factory
 from common.logger import log as L
@@ -90,14 +90,9 @@ async def _send_to_one_list(
 ) -> tuple[str, bool]:
     """Send to a single list. Returns (message, has_error)."""
     try:
+        provider = get_provider(smtp_conn)
         if pdf_bytes is not None:
-            await send_report_email_with_attachment(
-                provider=smtp_conn.provider,
-                smtp_host=smtp_conn.smtp_host,
-                smtp_port=smtp_conn.smtp_port,
-                username=smtp_conn.username,
-                secret_scope=smtp_conn.secret_scope,
-                secret_key=smtp_conn.secret_key,
+            await provider.send_attachment(
                 from_email=smtp_conn.from_email,
                 recipients=send_list.emails,
                 subject=f"Scheduled Report: {schedule.name}",
@@ -105,13 +100,7 @@ async def _send_to_one_list(
                 filename=f"{schedule.name}.pdf",
             )
         else:
-            await send_report_email(
-                provider=smtp_conn.provider,
-                smtp_host=smtp_conn.smtp_host,
-                smtp_port=smtp_conn.smtp_port,
-                username=smtp_conn.username,
-                secret_scope=smtp_conn.secret_scope,
-                secret_key=smtp_conn.secret_key,
+            await provider.send_html(
                 from_email=smtp_conn.from_email,
                 recipients=send_list.emails,
                 subject=f"Scheduled Report: {schedule.name}",

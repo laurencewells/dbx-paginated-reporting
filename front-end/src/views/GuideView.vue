@@ -14,6 +14,7 @@ const sections = [
   { id: 'images',            label: 'Images',              icon: 'bi-images' },
   { id: 'markdown',          label: 'Markdown Templates',  icon: 'bi-markdown' },
   { id: 'scheduling',        label: 'Scheduling',          icon: 'bi-clock-history' },
+  { id: 'pagination',        label: 'Pagination Magic',    icon: 'bi-layout-text-sidebar-reverse' },
 ]
 
 // ── Inline syntax tags ────────────────────────────────────────────────────────
@@ -343,7 +344,7 @@ Generated: {{date}}
 | Status | {{status}} |
 | Amount | {{amount}} |
 
-<div style="page-break-after: always"></div>
+<div class="page-break"></div>
 {{/rows}}`,
 
   markdown_table: `| Name | Department | Status |
@@ -352,6 +353,93 @@ Generated: {{date}}
 {{/rows}}`,
 
   image_basic: `<img src="img:IMAGE_ID" alt="Description" />`,
+
+  pagination_break_after: `<!-- Force page break AFTER this point -->
+<div class="page-break"></div>
+
+<!-- Force page break BEFORE the next content block -->
+<div class="page-break-before"></div>`,
+
+  pagination_no_break: `<!-- Keep this block together — don't split across pages -->
+<div class="no-break">
+  <h2>Section Heading</h2>
+  <p>Opening paragraph that should stay with the heading.</p>
+  <div class="report-tile tile-primary">
+    <div class="report-tile-title">KPI</div>
+    <div class="report-tile-value">{{value}}</div>
+  </div>
+</div>`,
+
+  pagination_break_after_n: `<!-- Auto page break every 20 rows — no need to count manually -->
+<div data-break-after="20">
+  {{#rows}}
+  <div class="d-flex justify-content-between border-bottom py-2">
+    <span>{{name}}</span>
+    <span class="fw-semibold">{{amount}}</span>
+  </div>
+  {{/rows}}
+</div>`,
+
+  pagination_break_after_table: `<table class="report-table">
+  <thead>
+    <tr><th>Name</th><th>Department</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    <div data-break-after="25">
+      {{#rows}}<tr>
+        <td>{{name}}</td>
+        <td>{{department}}</td>
+        <td>{{status}}</td>
+      </tr>{{/rows}}
+    </div>
+  </tbody>
+</table>`,
+
+  pagination_global_header: `<!-- Define ONCE — automatically cloned into every .report-page -->
+<div class="report-global-header">
+  <div class="d-flex justify-content-between align-items-center">
+    <img src="img:LOGO_ID" alt="Logo" style="height: 36px;" />
+    <span class="text-muted small fw-semibold">Monthly Revenue Report</span>
+  </div>
+</div>
+
+<div class="report-global-footer">
+  <div class="d-flex justify-content-between small text-muted">
+    <span>Confidential — Internal Use Only</span>
+    <span>Page {{_index}} of {{_total}}</span>
+  </div>
+</div>
+
+<div class="report-page">
+  <!-- Header and footer appear here automatically -->
+  <h1>January Summary</h1>
+  ...
+</div>
+<div class="report-page">
+  <!-- Header and footer appear here automatically too -->
+  <h1>February Summary</h1>
+  ...
+</div>`,
+
+  pagination_columns: `<!-- 2-column layout -->
+<div class="report-columns-2">
+  {{#rows}}
+  <div class="mb-3">
+    <div class="fw-semibold">{{name}}</div>
+    <div class="text-muted small">{{region}} · {{status}}</div>
+  </div>
+  {{/rows}}
+</div>
+
+<!-- 3-column layout (great for compact KPI grids) -->
+<div class="report-columns-3">
+  {{#rows}}
+  <div class="report-tile tile-primary mb-3">
+    <div class="report-tile-title">{{category}}</div>
+    <div class="report-tile-value">{{total}}</div>
+  </div>
+  {{/rows}}
+</div>`,
 
   image_header: `<div class="report-page">
   <div class="report-page-header d-flex align-items-center gap-3">
@@ -1034,8 +1122,9 @@ Generated: {{date}}
           <div class="card mb-4">
             <div class="card-header"><i class="bi bi-file-break me-2"></i>Page breaks</div>
             <div class="card-body">
-              <p class="small text-muted mb-2">Inline HTML is allowed inside Markdown templates. Use a div with <code>page-break-after</code> to force a new page in PDF exports and print:</p>
-              <pre class="code-block">&lt;div style="page-break-after: always"&gt;&lt;/div&gt;</pre>
+              <p class="small text-muted mb-2">Inline HTML is allowed inside Markdown templates. Use the <code>.page-break</code> magic class to insert a page break — it works in browser preview, PDF export, and scheduled email delivery:</p>
+              <pre class="code-block">&lt;div class="page-break"&gt;&lt;/div&gt;</pre>
+              <p class="small text-muted mt-2 mb-0">See the <strong>Pagination Magic</strong> section for the full set of layout commands (page-break-before, no-break, data-break-after, global headers/footers, and multi-column layouts).</p>
             </div>
           </div>
 
@@ -1189,6 +1278,134 @@ Generated: {{date}}
                 <li class="mb-2">Only the project owner and shared members can create or modify schedules. The <code>check_schedule_project_access</code> guard applies the same access + lock rules as structures and templates.</li>
                 <li>Scheduled renders use a <strong>10,000 row limit</strong> on the SQL query — the same as a full PDF export.</li>
               </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Pagination Magic ──────────────────────────────────────────── -->
+        <div v-if="activeSection === 'pagination'">
+          <h4 class="section-title"><i class="bi bi-layout-text-sidebar-reverse me-2 text-primary"></i>Pagination Magic Commands</h4>
+          <p class="text-muted">Special classes and attributes processed by both the live preview and the server-side PDF/email pipeline. All commands work in HTML templates and via inline HTML passthrough in Markdown templates.</p>
+
+          <!-- Page break commands -->
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-file-break me-2"></i>Page break commands</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Place invisible magic divs to control exactly where pages break. Visual indicators appear in the live preview.</p>
+              <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                  <div class="p-3 bg-light rounded h-100">
+                    <div class="fw-semibold small mb-1"><code>.page-break</code></div>
+                    <p class="small text-muted mb-0">Forces a page break <strong>after</strong> this point. Content below moves to the next page.</p>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="p-3 bg-light rounded h-100">
+                    <div class="fw-semibold small mb-1"><code>.page-break-before</code></div>
+                    <p class="small text-muted mb-0">Forces a page break <strong>before</strong> the following content block.</p>
+                  </div>
+                </div>
+              </div>
+              <pre class="code-block">{{ code.pagination_break_after }}</pre>
+            </div>
+          </div>
+
+          <!-- no-break -->
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-lock me-2"></i>Keeping blocks together (<code>.no-break</code>)</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Wrap any element in <code>.no-break</code> to prevent it from being split across pages. Useful for headings with their opening paragraph, or KPI tiles that should stay together.</p>
+              <pre class="code-block">{{ code.pagination_no_break }}</pre>
+            </div>
+          </div>
+
+          <!-- data-break-after -->
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-layout-split me-2"></i>Auto page break every N rows (<code>data-break-after</code>)</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Wrap a Mustache loop in a container with <code>data-break-after="N"</code>. After rendering, the pipeline counts direct child elements and automatically injects a <code>.page-break</code> after every N-th one — no manual counting needed.</p>
+              <pre class="code-block">{{ code.pagination_break_after_n }}</pre>
+              <p class="small text-muted mt-3 mb-2">Works equally well with table rows:</p>
+              <pre class="code-block">{{ code.pagination_break_after_table }}</pre>
+              <div class="alert alert-info mt-3 mb-0 py-2">
+                <i class="bi bi-info-circle me-2"></i>
+                The trailing group (the last partial batch of rows) never gets a page break appended — the renderer handles this automatically.
+              </div>
+            </div>
+          </div>
+
+          <!-- global header/footer -->
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-textarea-t me-2"></i>Repeating header &amp; footer (<code>.report-global-header</code> / <code>.report-global-footer</code>)</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Define <code>.report-global-header</code> and/or <code>.report-global-footer</code> <strong>once</strong> — outside any <code>.report-page</code> div. The renderer automatically removes them from their original position and injects a copy at the top and bottom of <strong>every</strong> <code>.report-page</code>. Headers and footers can contain Mustache, charts, and image references.</p>
+              <pre class="code-block">{{ code.pagination_global_header }}</pre>
+              <div class="alert alert-warning mt-3 mb-0 py-2">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                This feature only works in templates that use explicit <code>&lt;div class="report-page"&gt;</code> divs. Markdown templates require inline <code>&lt;div&gt;</code> passthrough for page wrappers.
+              </div>
+            </div>
+          </div>
+
+          <!-- columns -->
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-layout-three-columns me-2"></i>Multi-column layouts</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Use <code>.report-columns-2</code>, <code>.report-columns-3</code>, or <code>.report-columns-4</code> to flow content into newspaper-style columns using CSS <code>column-count</code>. Works in both browser preview and WeasyPrint PDF.</p>
+              <pre class="code-block">{{ code.pagination_columns }}</pre>
+              <div class="alert alert-info mt-3 mb-0 py-2">
+                <i class="bi bi-info-circle me-2"></i>
+                Chart divs inside multi-column containers may not render at the expected size — place charts outside column wrappers where possible.
+              </div>
+            </div>
+          </div>
+
+          <!-- summary table -->
+          <div class="card">
+            <div class="card-header"><i class="bi bi-table me-2"></i>Quick reference</div>
+            <div class="card-body p-0">
+              <table class="table table-sm mb-0">
+                <thead class="table-dark">
+                  <tr><th>Element</th><th>Effect</th><th>Works in Markdown?</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>&lt;div class="page-break"&gt;</code></td>
+                    <td>Page break after</td>
+                    <td><span class="badge bg-success">Yes</span></td>
+                  </tr>
+                  <tr>
+                    <td><code>&lt;div class="page-break-before"&gt;</code></td>
+                    <td>Page break before</td>
+                    <td><span class="badge bg-success">Yes</span></td>
+                  </tr>
+                  <tr>
+                    <td><code>&lt;div class="no-break"&gt;</code></td>
+                    <td>Prevent split across pages</td>
+                    <td><span class="badge bg-success">Yes</span></td>
+                  </tr>
+                  <tr>
+                    <td><code>data-break-after="N"</code></td>
+                    <td>Auto break every N child elements</td>
+                    <td><span class="badge bg-success">Yes</span></td>
+                  </tr>
+                  <tr>
+                    <td><code>.report-global-header</code></td>
+                    <td>Cloned into top of every .report-page</td>
+                    <td><span class="badge bg-warning text-dark">Requires page divs</span></td>
+                  </tr>
+                  <tr>
+                    <td><code>.report-global-footer</code></td>
+                    <td>Cloned into bottom of every .report-page</td>
+                    <td><span class="badge bg-warning text-dark">Requires page divs</span></td>
+                  </tr>
+                  <tr>
+                    <td><code>.report-columns-2 / -3 / -4</code></td>
+                    <td>Multi-column flow layout</td>
+                    <td><span class="badge bg-success">Yes</span></td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

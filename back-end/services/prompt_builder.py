@@ -128,6 +128,82 @@ Users can upload images to the Image Gallery and reference them via:
 <img src="img:IMAGE_ID" alt="Description" />
 ```
 Always use `<img>` tags — CSS `background-image` with gallery URLs is blocked by the sanitizer.
+
+## Pagination Magic Commands
+
+These work in both browser preview and server-side PDF/email delivery.
+
+**Page break commands:**
+```html
+<!-- Force a page break AFTER this point -->
+<div class="page-break"></div>
+
+<!-- Force a page break BEFORE the next content block -->
+<div class="page-break-before"></div>
+
+<!-- Prevent a block from splitting across pages -->
+<div class="no-break">
+  <h2>Section Heading</h2>
+  <p>Introductory paragraph that must stay with the heading.</p>
+</div>
+```
+
+**Auto page break every N rows (data-break-after):**
+Wrap the repeating section in a div with `data-break-after="N"`. The renderer injects a `.page-break` after every N direct child elements automatically.
+```html
+<div data-break-after="20">
+  {{{{#rows}}}}<div class="row-block">...</div>{{{{/rows}}}}
+</div>
+```
+Or for table rows:
+```html
+<table class="report-table">
+  <thead><tr><th>Name</th><th>Value</th></tr></thead>
+  <tbody>
+    <div data-break-after="25">
+      {{{{#rows}}}}<tr><td>{{{{name}}}}</td><td>{{{{value}}}}</td></tr>{{{{/rows}}}}
+    </div>
+  </tbody>
+</table>
+```
+
+**Repeating header/footer (global, across all pages):**
+Define `.report-global-header` and `.report-global-footer` ONCE outside any `.report-page`. The renderer automatically clones them into the top and bottom of every `.report-page` div. Only works when the template uses explicit `.report-page` divs.
+```html
+<div class="report-global-header">
+  <div class="d-flex justify-content-between align-items-center">
+    <img src="img:LOGO_ID" alt="Logo" style="height:40px;" />
+    <span class="text-muted small">Monthly Revenue Report — {{{{report_month}}}}</span>
+  </div>
+</div>
+
+<div class="report-global-footer">
+  <div class="d-flex justify-content-between small text-muted">
+    <span>Confidential</span>
+    <span class="page-number">Page {{{{_index}}}} of {{{{_total}}}}</span>
+  </div>
+</div>
+
+<div class="report-page">
+  <!-- page content -->
+</div>
+<div class="report-page">
+  <!-- page content — header and footer automatically appear here too -->
+</div>
+```
+
+**Multi-column layouts:**
+```html
+<!-- 2-column layout (be aware charts inside columns may not render as expected) -->
+<div class="report-columns-2">
+  {{{{#rows}}}}<div class="mb-3"><strong>{{{{name}}}}</strong>: {{{{value}}}}</div>{{{{/rows}}}}
+</div>
+
+<!-- 3-column layout -->
+<div class="report-columns-3">
+  ...
+</div>
+```
 {_DATA_SHAPE_SECTION}
 {_fields_section(structure)}
 {_sql_section(structure)}
@@ -213,6 +289,64 @@ Reference uploaded images using `img:UUID` inside a standard `<img>` tag — the
 
 ```markdown
 <img src="img:IMAGE_ID" alt="Description" />
+```
+
+## Pagination Magic Commands (inline HTML passthrough)
+
+These work as inline HTML in Markdown templates and apply in both browser preview and PDF/email delivery.
+
+**Page break commands:**
+```markdown
+Force a break after this paragraph.
+
+<div class="page-break"></div>
+
+New page starts here.
+
+---
+
+<div class="page-break-before"></div>
+
+This content is forced to start on a new page.
+
+Keep this block together across pages:
+<div class="no-break">
+
+## Section Heading
+
+Introductory text that should stay with the heading.
+
+</div>
+```
+
+**Auto page break every N items:**
+```markdown
+<div data-break-after="20">
+{{{{#rows}}}}<div class="row-item">**{{{{name}}}}** — {{{{value}}}}</div>
+{{{{/rows}}}}
+</div>
+```
+
+**Repeating global header/footer:**
+Only works in Markdown templates if the rendered output wraps content in `.report-page` divs — typically used when Markdown includes explicit `<div class="report-page">` passthrough blocks.
+```markdown
+<div class="report-global-header">
+
+**Monthly Report** — {{{{report_month}}}}
+
+</div>
+
+<div class="report-global-footer">Confidential</div>
+```
+
+**Multi-column layouts:**
+```markdown
+<div class="report-columns-2">
+
+{{{{#rows}}}}- **{{{{name}}}}**: {{{{value}}}}
+{{{{/rows}}}}
+
+</div>
 ```
 {_DATA_SHAPE_SECTION}
 {_fields_section(structure)}

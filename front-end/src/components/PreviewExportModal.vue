@@ -5,7 +5,7 @@ import Mustache from 'mustache'
 import { marked } from 'marked'
 import { previewDataApiV1TemplatesTemplateIdPreviewDataPost } from '@/api/generated'
 import type { PreviewDataResponse } from '@/api/generated'
-import { renderChartsAsSvg } from '@/utils/chartSvg'
+import { renderChartsAsSvg, processLayoutMagic } from '@/utils/chartSvg'
 
 const props = defineProps<{
   show: boolean
@@ -53,6 +53,14 @@ const REPORT_STYLES = `
   .chart-title { font-size: 1rem; font-weight: 600; color: #2d3e50; margin-bottom: 1rem; }
   .report-bar-chart, .report-pie-chart { position: relative; width: 100%; max-height: 300px; }
   .page-number { text-align: center; font-size: 0.75rem; color: #999; padding-top: 1.5rem; margin-top: auto; border-top: 1px solid #eee; }
+  .page-break { height: 0; margin: 0; padding: 0; border: none; display: block; page-break-after: always; break-after: page; }
+  .page-break-before { height: 0; margin: 0; padding: 0; border: none; display: block; page-break-before: always; break-before: page; }
+  .no-break { break-inside: avoid; page-break-inside: avoid; }
+  .report-columns-2 { column-count: 2; column-gap: 2rem; }
+  .report-columns-3 { column-count: 3; column-gap: 1.5rem; }
+  .report-columns-4 { column-count: 4; column-gap: 1rem; }
+  .report-global-header { border-bottom: 2px solid #2d3e50; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  .report-global-footer { border-top: 1px solid #dee2e6; padding-top: 0.75rem; margin-top: 1.5rem; font-size: 0.8rem; color: #6c757d; }
   @media print {
     .row { display: flex !important; flex-wrap: wrap !important; }
     [class*="col-"] { flex-shrink: 0; }
@@ -122,6 +130,7 @@ watch(renderedHtml, async (html) => {
   if (!html) { previewHtmlWithCharts.value = ''; return }
   const tmp = document.createElement('div')
   tmp.innerHTML = html
+  processLayoutMagic(tmp)
   await renderChartsAsSvg(tmp)
   previewHtmlWithCharts.value = tmp.innerHTML
 }, { immediate: true })
@@ -160,6 +169,7 @@ async function exportToPdf() {
     const bodyHtml = expandImageRefs(renderBody(Mustache.render(props.htmlContent, result.data)))
     const tmp = document.createElement('div')
     tmp.innerHTML = bodyHtml
+    processLayoutMagic(tmp)
     await renderChartsAsSvg(tmp)
     const doc = buildDocument(tmp.innerHTML, props.templateName ?? 'Report')
     const iframe = document.createElement('iframe')

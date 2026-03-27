@@ -72,13 +72,198 @@ _REPORT_STYLES = """
   .g-2 > *, .gx-2 > * { padding-right: 0.5rem  !important; padding-left: 0.5rem  !important; }
   .g-3 > *, .gx-3 > * { padding-right: 0.75rem !important; padding-left: 0.75rem !important; }
   .g-4 > *, .gx-4 > * { padding-right: 1rem    !important; padding-left: 1rem    !important; }
+  /* Pagination magic — page break commands */
+  .page-break { height: 0; margin: 0; padding: 0; border: none; display: block; page-break-after: always; break-after: page; }
+  .page-break-before { height: 0; margin: 0; padding: 0; border: none; display: block; page-break-before: always; break-before: page; }
+  .no-break { break-inside: avoid; page-break-inside: avoid; }
+  /* Pagination magic — multi-column layouts */
+  .report-columns-2 { column-count: 2; column-gap: 2rem; }
+  .report-columns-3 { column-count: 3; column-gap: 1.5rem; }
+  .report-columns-4 { column-count: 4; column-gap: 1rem; }
+  /* Pagination magic — global header/footer (injected into every .report-page by the renderer) */
+  .report-global-header { border-bottom: 2px solid #2d3e50; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  .report-global-footer { border-top: 1px solid #dee2e6; padding-top: 0.75rem; margin-top: 1.5rem; font-size: 0.8rem; color: #6c757d; }
 """
+
+# ---------------------------------------------------------------------------
+# Pagination layout magic — post-processing for header/footer and break-after
+# ---------------------------------------------------------------------------
+
+_DIV_OPEN_RE = re.compile(r'<div\b')
+_DIV_CLOSE_RE = re.compile(r'</div>')
+# Matches a .report-page opening tag — report-page as a standalone class (not a prefix like report-page-header)
+_REPORT_PAGE_OPEN_RE = re.compile(
+    r'<div\b[^>]*\bclass="(?:[^"]*\s|)report-page(?:\s[^"]*)?"[^>]*>'
+)
+_BREAK_AFTER_OPEN_RE = re.compile(r'<div\b([^>]*)\bdata-break-after="(\d+)"([^>]*)>')
+_VOID_TAGS = frozenset(
+    'area base br col embed hr img input link meta param source track wbr'.split()
+)
+_CHILD_TAG_RE = re.compile(r'<(/?)(\w+)([^>]*)>', re.DOTALL)
+
+
+def _find_div_close(html: str, content_start: int) -> tuple[int | None, int | None]:
+    """
+    Find the </div> that closes a <div> whose content starts at content_start.
+    Returns (inner_end, outer_end) — positions before/after the closing tag.
+    Returns (None, None) on malformed HTML.
+    """
+    depth = 1
+    pos = content_start
+    while depth > 0:
+        open_m = _DIV_OPEN_RE.search(html, pos)
+        close_m = _DIV_CLOSE_RE.search(html, pos)
+        if not close_m:
+            return None, None
+        if open_m and open_m.start() < close_m.start():
+            depth += 1
+            pos = open_m.end()
+        else:
+            depth -= 1
+            if depth == 0:
+                return close_m.start(), close_m.end()
+            pos = close_m.end()
+    return None, None
+
+
+def _extract_class_div(html: str, cls: str) -> tuple[str | None, str]:
+    """
+    Find the first <div> whose class attribute contains `cls` as a standalone class,
+    extract its inner HTML, and return (inner_html, html_without_that_div).
+    Returns (None, html) if not found.
+    """
+    m = re.search(
+        rf'<div\b[^>]*\bclass="(?:[^"]*\s|){re.escape(cls)}(?:\s[^"]*)?"[^>]*>',
+        html,
+    )
+    if not m:
+        return None, html
+    inner_end, outer_end = _find_div_close(html, m.end())
+    if inner_end is None:
+        return None, html
+    inner = html[m.end():inner_end]
+    cleaned = html[:m.start()] + html[outer_end:]
+    return inner, cleaned
+
+
+def _inject_breaks_in_content(content: str, n: int) -> str:
+    """
+    Scan top-level child elements in `content` and insert a .page-break div
+    after every n-th element. The final partial group never gets a trailing break.
+    """
+    BREAK = '<div class="page-break"></div>'
+    parts: list[tuple[str, bool]] = []  # (text, is_break_marker)
+    pos = 0
+    depth = 0
+    count = 0
+
+    for m in _CHILD_TAG_RE.finditer(content):
+        parts.append((content[pos:m.start()], False))
+        is_close = bool(m.group(1))
+        tag = m.group(2).lower()
+        self_closing = m.group(3).rstrip().endswith('/') or tag in _VOID_TAGS
+        parts.append((m.group(0), False))
+        pos = m.end()
+
+        if is_close:
+            if depth > 0:
+                depth -= 1
+            if depth == 0:
+                count += 1
+                if count % n == 0:
+                    parts.append((BREAK, True))
+        elif not self_closing:
+            depth += 1
+
+    parts.append((content[pos:], False))
+
+    # Drop trailing break marker if nothing meaningful follows it
+    last_break = next((i for i in reversed(range(len(parts))) if parts[i][1]), -1)
+    if last_break != -1:
+        after_text = ''.join(t for t, _ in parts[last_break + 1:]).strip()
+        if not after_text:
+            parts = parts[:last_break] + parts[last_break + 1:]
+
+    return ''.join(t for t, _ in parts)
+
+
+def _inject_global_header_footer(html: str) -> str:
+    """
+    Find .report-global-header and .report-global-footer divs, remove them from
+    their original positions, and inject copies at the top/bottom of every .report-page.
+    """
+    header_inner, html = _extract_class_div(html, 'report-global-header')
+    footer_inner, html = _extract_class_div(html, 'report-global-footer')
+    if not header_inner and not footer_inner:
+        return html
+
+    header_html = f'<div class="report-global-header">{header_inner}</div>' if header_inner else ''
+    footer_html = f'<div class="report-global-footer">{footer_inner}</div>' if footer_inner else ''
+
+    out: list[str] = []
+    pos = 0
+    for m in _REPORT_PAGE_OPEN_RE.finditer(html):
+        inner_end, outer_end = _find_div_close(html, m.end())
+        if inner_end is None:
+            out.append(html[pos:m.end()])
+            pos = m.end()
+            continue
+        out.append(html[pos:m.start()])
+        out.append(m.group(0))
+        out.append(header_html)
+        out.append(html[m.end():inner_end])
+        out.append(footer_html)
+        out.append('</div>')
+        pos = outer_end
+
+    out.append(html[pos:])
+    return ''.join(out)
+
+
+def _apply_break_after(html: str) -> str:
+    """
+    Find <div data-break-after="N"> elements and inject .page-break divs
+    after every N top-level child elements within each one.
+    """
+    out: list[str] = []
+    pos = 0
+    for m in _BREAK_AFTER_OPEN_RE.finditer(html):
+        n = int(m.group(2))
+        if n <= 0:
+            continue
+        content_start = m.end()
+        inner_end, outer_end = _find_div_close(html, content_start)
+        if inner_end is None:
+            continue
+        inner = html[content_start:inner_end]
+        other_attrs = (m.group(1) + m.group(3)).strip()
+        open_tag = f'<div {other_attrs}>' if other_attrs else '<div>'
+        out.append(html[pos:m.start()])
+        out.append(open_tag)
+        out.append(_inject_breaks_in_content(inner, n))
+        out.append('</div>')
+        pos = outer_end
+
+    out.append(html[pos:])
+    return ''.join(out)
+
+
+def process_layout_magic(html: str) -> str:
+    """
+    Post-process rendered Mustache HTML to apply pagination magic commands:
+    - Clone .report-global-header / .report-global-footer into every .report-page
+    - Inject .page-break divs at data-break-after="N" intervals
+    """
+    html = _inject_global_header_footer(html)
+    html = _apply_break_after(html)
+    return html
+
 
 def _parse_chart_opts(all_attrs: str) -> dict:
     """Extract optional Vega-Lite data attributes from a chart div's attribute string."""
     opts: dict = {}
     for key in ('title', 'color-scheme', 'width', 'height', 'x-title', 'y-title', 'sort', 'inner-radius'):
-        m = re.search(rf'\bdata-{re.escape(key)}="([^"]*)"', all_attrs)
+        m = re.search(rf'\bdata-{re.escape(key)}=["\']([^"\']*)["\']', all_attrs)
         if m:
             opts[key] = m.group(1).strip()
     return opts
@@ -212,8 +397,8 @@ _IMAGE_SRC_RE = re.compile(
 
 async def inline_images(html: str) -> str:
     """
-    Replace /api/v1/images/{uuid}/data src attributes with base64 data URIs
-    fetched directly from the database.
+    Replace img:UUID src attributes with base64 data URIs fetched directly
+    from the database.
 
     Safe to call for both HTML downloads and WeasyPrint — images that cannot
     be resolved are left as-is rather than raising.
@@ -299,6 +484,8 @@ async def render_report(template_id: UUID) -> tuple[str, Template]:
 
     if template.template_type == "markdown":
         rendered = _render_markdown(rendered)
+
+    rendered = process_layout_magic(rendered)
 
     return rendered, template
 

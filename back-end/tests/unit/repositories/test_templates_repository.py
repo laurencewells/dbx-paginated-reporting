@@ -31,12 +31,16 @@ def _row(
     name: str = "My Template",
     structure_id: str | None = None,
     html_content: str = "<p>hello</p>",
+    page_size: str = "A4",
+    template_type: str = "html",
 ):
     return (
         str(id or TID),
         name,
         str(structure_id or SID),
         html_content,
+        page_size,
+        template_type,
         NOW,
         NOW,
     )
