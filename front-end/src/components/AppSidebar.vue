@@ -176,7 +176,11 @@ const componentSnippets = [
     description: 'Vertical bar chart',
     snippet: `<div class="chart-container">
   <div class="chart-title">Chart Title</div>
-  <div class="report-bar-chart" data-labels="{{#rows}}{{label}},{{/rows}}" data-values="{{#rows}}{{value}},{{/rows}}">
+  <div class="report-bar-chart"
+    data-labels="{{#rows}}{{label}},{{/rows}}"
+    data-values="{{#rows}}{{value}},{{/rows}}">
+    <!-- Optional: data-title="My Chart" data-color-scheme="blues" data-sort="descending" -->
+    <!-- Optional: data-x-title="Category" data-y-title="Value" data-width="500" data-height="250" -->
   </div>
 </div>`,
   },
@@ -186,7 +190,10 @@ const componentSnippets = [
     description: 'Pie/donut chart',
     snippet: `<div class="chart-container">
   <div class="chart-title">Chart Title</div>
-  <div class="report-pie-chart" data-labels="North,South,East,West" data-values="35,25,20,20">
+  <div class="report-pie-chart"
+    data-labels="{{#rows}}{{label}},{{/rows}}"
+    data-values="{{#rows}}{{value}},{{/rows}}">
+    <!-- Optional: data-title="My Chart" data-color-scheme="tableau10" data-inner-radius="50" (donut) -->
   </div>
 </div>`,
   },
@@ -299,6 +306,32 @@ const markdownSnippets = [
     snippet: `{{#condition}}
 Content shown when condition is true.
 {{/condition}}`,
+  },
+  {
+    name: 'Bar Chart',
+    icon: 'bi-bar-chart',
+    description: 'Inline bar chart (HTML passthrough)',
+    snippet: `<div class="chart-container">
+  <div class="chart-title">Chart Title</div>
+  <div class="report-bar-chart"
+    data-labels="{{#rows}}{{label}},{{/rows}}"
+    data-values="{{#rows}}{{value}},{{/rows}}">
+    <!-- Optional: data-title="My Chart" data-color-scheme="blues" data-sort="descending" -->
+  </div>
+</div>`,
+  },
+  {
+    name: 'Pie Chart',
+    icon: 'bi-pie-chart',
+    description: 'Inline pie/donut chart (HTML passthrough)',
+    snippet: `<div class="chart-container">
+  <div class="chart-title">Chart Title</div>
+  <div class="report-pie-chart"
+    data-labels="{{#rows}}{{label}},{{/rows}}"
+    data-values="{{#rows}}{{value}},{{/rows}}">
+    <!-- Optional: data-title="My Chart" data-color-scheme="tableau10" data-inner-radius="50" (donut) -->
+  </div>
+</div>`,
   },
 ]
 

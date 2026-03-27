@@ -351,11 +351,11 @@ Generated: {{date}}
 {{#rows}}| {{name}} | {{department}} | {{status}} |
 {{/rows}}`,
 
-  image_basic: `<img src="/api/v1/images/IMAGE_ID/data" alt="Description" />`,
+  image_basic: `<img src="img:IMAGE_ID" alt="Description" />`,
 
   image_header: `<div class="report-page">
   <div class="report-page-header d-flex align-items-center gap-3">
-    <img src="/api/v1/images/IMAGE_ID/data"
+    <img src="img:IMAGE_ID"
          alt="Company Logo"
          style="height: 48px;" />
     <h1 class="mb-0">Monthly Report</h1>
@@ -366,7 +366,7 @@ Generated: {{date}}
   </div>
 </div>`,
 
-  image_styled: `<img src="/api/v1/images/IMAGE_ID/data"
+  image_styled: `<img src="img:IMAGE_ID"
      alt="Product photo"
      style="max-width: 300px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);" />`,
 
@@ -403,6 +403,35 @@ Generated: {{date}}
   </div>
 </div>
 {{/rows}}`,
+
+  chart_opts_bar: `<div class="report-bar-chart"
+  data-labels="{{#rows}}{{region}},{{/rows}}"
+  data-values="{{#rows}}{{total}},{{/rows}}"
+  data-title="Revenue by Region"
+  data-color-scheme="blues"
+  data-y-title="Revenue ($)"
+  data-sort="descending">
+</div>`,
+
+  chart_opts_donut: `<div class="report-pie-chart"
+  data-labels="{{#rows}}{{category}},{{/rows}}"
+  data-values="{{#rows}}{{amount}},{{/rows}}"
+  data-title="Spend by Category"
+  data-inner-radius="50">
+</div>`,
+
+  markdown_chart: `## Revenue Summary
+
+{{#rows}}
+**{{region}}**: \${{total}}
+{{/rows}}
+
+<div class="report-bar-chart"
+  data-labels="{{#rows}}{{region}},{{/rows}}"
+  data-values="{{#rows}}{{total}},{{/rows}}"
+  data-title="Revenue by Region"
+  data-color-scheme="blues">
+</div>`,
 }
 </script>
 
@@ -453,7 +482,7 @@ Generated: {{date}}
                 <li class="mb-2">Give it a name (e.g. "Q1 Sales Reports") and click <strong>Create</strong>.</li>
                 <li class="mb-2">Click <strong>Open</strong> to set it as your active project — you'll see a banner in the sidebar.</li>
                 <li class="mb-2">Now go to <strong>Data Structures</strong> — any structures you create will automatically belong to this project.</li>
-                <li>Create templates linked to those structures, then use the <strong>Export</strong> button in the Template Editor to preview and export PDF.</li>
+                <li>Create templates linked to those structures, then use the <strong>Export</strong> button in the Template Editor to preview with real data (configurable row count) and export to PDF.</li>
               </ol>
             </div>
           </div>
@@ -724,7 +753,7 @@ Generated: {{date}}
             </div>
           </div>
 
-          <div class="card">
+          <div class="card mb-4">
             <div class="card-header"><i class="bi bi-table me-2"></i>Pattern comparison</div>
             <div class="card-body p-0">
               <table class="table table-sm mb-0">
@@ -749,6 +778,43 @@ Generated: {{date}}
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-sliders me-2"></i>Optional chart attributes</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">All attributes are optional — existing chart divs work unchanged. Add them to customise appearance and behaviour without any template restructuring.</p>
+              <table class="table table-sm mb-0">
+                <thead class="table-dark">
+                  <tr><th>Attribute</th><th>Applies to</th><th>Description</th><th>Example</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><code>data-title</code></td><td>bar, pie</td><td>Chart title rendered above the chart</td><td><code>"Revenue by Region"</code></td></tr>
+                  <tr><td><code>data-color-scheme</code></td><td>bar, pie</td><td>Vega colour scheme name</td><td><code>"blues"</code>, <code>"tableau10"</code></td></tr>
+                  <tr><td><code>data-width</code></td><td>bar, pie</td><td>Width in px (default: 500 bar / 300 pie)</td><td><code>"400"</code></td></tr>
+                  <tr><td><code>data-height</code></td><td>bar, pie</td><td>Height in px (default: 250 bar / 300 pie)</td><td><code>"200"</code></td></tr>
+                  <tr><td><code>data-x-title</code></td><td>bar</td><td>X-axis label</td><td><code>"Quarter"</code></td></tr>
+                  <tr><td><code>data-y-title</code></td><td>bar</td><td>Y-axis label</td><td><code>"Revenue ($)"</code></td></tr>
+                  <tr><td><code>data-sort</code></td><td>bar</td><td>Sort bars: <code>ascending</code>, <code>descending</code></td><td><code>"descending"</code></td></tr>
+                  <tr><td><code>data-inner-radius</code></td><td>pie</td><td>Inner radius in px — <code>0</code> = pie (default), <code>&gt;0</code> = donut</td><td><code>"50"</code></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-bar-chart me-2"></i>Example: titled bar chart with colour scheme</div>
+            <div class="card-body">
+              <pre class="code-block">{{ code.chart_opts_bar }}</pre>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><i class="bi bi-pie-chart me-2"></i>Example: donut chart</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Set <code>data-inner-radius</code> to any positive value to turn a pie chart into a donut. A value of <code>50</code> is a good starting point.</p>
+              <pre class="code-block">{{ code.chart_opts_donut }}</pre>
             </div>
           </div>
         </div>
@@ -846,8 +912,8 @@ Generated: {{date}}
               <ol class="mb-0">
                 <li class="mb-2">Go to <strong>Image Gallery</strong> (make sure you have an active project).</li>
                 <li class="mb-2">Upload an image — drag &amp; drop or click <strong>Upload</strong>. Supported formats: JPEG, PNG, GIF, WebP, SVG (max 2 MB).</li>
-                <li class="mb-2">Click the <i class="bi bi-link-45deg"></i> button on the image card to copy its URL.</li>
-                <li>Paste the URL into an <code>&lt;img&gt;</code> tag in your template.</li>
+                <li class="mb-2">Click the <i class="bi bi-link-45deg"></i> button on the image card to copy its <code>img:UUID</code> reference.</li>
+                <li>Paste it into an <code>&lt;img&gt;</code> tag in your template: <code>&lt;img src="img:IMAGE_ID" alt="…" /&gt;</code></li>
               </ol>
             </div>
           </div>
@@ -883,7 +949,7 @@ Generated: {{date}}
                 </thead>
                 <tbody>
                   <tr>
-                    <td><code>&lt;img src="/api/v1/images/ID/data"&gt;</code></td>
+                    <td><code>&lt;img src="img:IMAGE_ID"&gt;</code></td>
                     <td><code>background-image: url(/api/v1/images/ID/data)</code></td>
                   </tr>
                   <tr>
@@ -937,7 +1003,7 @@ Generated: {{date}}
                   <ul class="small mb-0">
                     <li class="mb-2">Multi-column layouts with Bootstrap grid</li>
                     <li class="mb-2">Precise per-page styling with custom CSS</li>
-                    <li class="mb-2">KPI tiles, charts, or complex badge styling</li>
+                    <li class="mb-2">KPI tiles or complex badge styling requiring custom CSS</li>
                     <li>Reports that require <code>.report-page</code> divs with controlled page breaks</li>
                   </ul>
                 </div>
@@ -973,6 +1039,18 @@ Generated: {{date}}
             </div>
           </div>
 
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-bar-chart me-2"></i>Charts in Markdown templates</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Chart divs work inside Markdown templates via inline HTML passthrough. Paste a <code>report-bar-chart</code> or <code>report-pie-chart</code> div directly into your template — Mustache is evaluated first, then the chart is rendered as inline SVG before display.</p>
+              <pre class="code-block">{{ code.markdown_chart }}</pre>
+              <div class="alert alert-success mt-3 mb-0 py-2">
+                <i class="bi bi-check-circle me-2"></i>
+                Charts render identically in browser preview, PDF export, and scheduled email delivery — no extra configuration required.
+              </div>
+            </div>
+          </div>
+
           <div class="card">
             <div class="card-header"><i class="bi bi-list-check me-2"></i>Supported Markdown features</div>
             <div class="card-body p-0">
@@ -989,7 +1067,7 @@ Generated: {{date}}
                   <tr><td><code>`code`</code> / <code>```block```</code></td><td>Inline / fenced code</td></tr>
                   <tr><td><code>| Col | Col |</code> + header separator</td><td>GFM table</td></tr>
                   <tr><td><code>---</code></td><td>Horizontal rule</td></tr>
-                  <tr><td>Inline HTML</td><td>Passed through (page breaks, images, etc.)</td></tr>
+                  <tr><td>Inline HTML</td><td>Passed through (page breaks, images, charts, etc.)</td></tr>
                 </tbody>
               </table>
             </div>

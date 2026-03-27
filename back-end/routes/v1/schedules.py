@@ -171,10 +171,8 @@ async def _execute_report(
     html_body, template = await render_report(schedule.template_id)
     if template.page_size == "email":
         is_markdown = template.template_type == "markdown"
-        body = html_body or ""
-        if not is_markdown:
-            body = render_charts_as_svg(body)
-        full_html = build_html_document(body, template.name, include_charts=False, is_markdown=is_markdown)
+        body = render_charts_as_svg(html_body or "")
+        full_html = build_html_document(body, template.name, is_markdown=is_markdown)
         email_summary, email_failures = await _send_to_lists(schedule, full_html, send_lists_repo, smtp_repo)
     else:
         pdf_bytes, _ = await render_report_pdf(schedule.template_id)

@@ -283,6 +283,56 @@ class TestRenderChartsAsSvg:
         assert 'X' in result
         assert '<rect' in result
 
+    def test_data_title_applied_to_bar_chart(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-bar-chart" data-labels="A,B" data-values="10,20" data-title="My Chart"></div>'
+        result = render_charts_as_svg(html)
+        assert '<svg' in result
+        assert 'My Chart' in result
+
+    def test_data_title_applied_to_pie_chart(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-pie-chart" data-labels="A,B" data-values="40,60" data-title="Pie Title"></div>'
+        result = render_charts_as_svg(html)
+        assert '<svg' in result
+        assert 'Pie Title' in result
+
+    def test_color_scheme_does_not_raise(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-bar-chart" data-labels="A,B" data-values="10,20" data-color-scheme="blues"></div>'
+        result = render_charts_as_svg(html)
+        assert '<svg' in result
+
+    def test_sort_ascending_does_not_raise(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-bar-chart" data-labels="C,A,B" data-values="3,1,2" data-sort="ascending"></div>'
+        result = render_charts_as_svg(html)
+        assert '<svg' in result
+
+    def test_inner_radius_produces_donut(self):
+        from services.report_renderer import render_charts_as_svg
+
+        html = '<div class="report-pie-chart" data-labels="A,B" data-values="50,50" data-inner-radius="50"></div>'
+        result = render_charts_as_svg(html)
+        assert '<svg' in result
+
+    def test_markdown_template_charts_render(self):
+        from services.report_renderer import render_charts_as_svg
+
+        # Charts inside markdown-rendered HTML (inline HTML passthrough) must render identically
+        html = (
+            '<div class="markdown-body">'
+            '<div class="report-bar-chart" data-labels="Jan,Feb" data-values="100,200"></div>'
+            '</div>'
+        )
+        result = render_charts_as_svg(html)
+        assert '<svg' in result
+        assert '<rect' in result
+
 
 # ---------------------------------------------------------------------------
 # render_report_pdf

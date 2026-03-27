@@ -125,7 +125,7 @@ Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradi
 
 Users can upload images to the Image Gallery and reference them via:
 ```html
-<img src="/api/v1/images/IMAGE_ID/data" alt="Description" />
+<img src="img:IMAGE_ID" alt="Description" />
 ```
 Always use `<img>` tags — CSS `background-image` with gallery URLs is blocked by the sanitizer.
 {_DATA_SHAPE_SECTION}
@@ -155,8 +155,7 @@ This template type uses **Mustache for data binding** and **extended Markdown (G
 Mustache is processed first, then the result is converted to HTML — so all standard Mustache syntax works inside Markdown.
 
 **Important constraints:**
-- No Bootstrap classes, no CSS. Prefer Markdown formatting; inline HTML (e.g. page-break `<div>` tags) is allowed where Markdown has no equivalent.
-- No charts — charts are not supported in Markdown templates.
+- No Bootstrap classes, no CSS. Prefer Markdown formatting; inline HTML (e.g. page-break `<div>` tags, chart `<div>` tags, `<img>` tags) is allowed where Markdown has no equivalent.
 - Use Markdown tables, headings, lists, code blocks, and blockquotes for all formatting.
 {_MUSTACHE_REFERENCE}
 ## Markdown Formatting Reference
@@ -187,6 +186,34 @@ Use pipe syntax for tables. Mustache can populate rows dynamically:
 ```
 
 Column alignment: `|:---|` left, `|:---:|` centre, `|---:|` right.
+
+## Charts (inline HTML passthrough)
+
+Markdown renders to HTML first, so chart `<div>` tags pass through and are rendered to inline SVG exactly like in HTML templates:
+
+```markdown
+Some **Markdown** text above the chart.
+
+<div class="report-bar-chart"
+  data-labels="{{{{#rows}}}}{{{{region}}}},{{{{/rows}}}}"
+  data-values="{{{{#rows}}}}{{{{total}}}},{{{{/rows}}}}"
+  data-title="Revenue by Region"
+  data-color-scheme="blues">
+</div>
+
+More Markdown below.
+```
+
+Supported chart types: `report-bar-chart`, `report-pie-chart`.
+Supported attributes: `data-title`, `data-color-scheme`, `data-width`, `data-height`, `data-x-title`, `data-y-title`, `data-sort`, `data-inner-radius`.
+
+## Images (inline HTML passthrough)
+
+Reference uploaded images using `img:UUID` inside a standard `<img>` tag — these pass through Markdown and are expanded at render time:
+
+```markdown
+<img src="img:IMAGE_ID" alt="Description" />
+```
 {_DATA_SHAPE_SECTION}
 {_fields_section(structure)}
 {_sql_section(structure)}
@@ -202,5 +229,6 @@ Column alignment: `|:---|` left, `|:---:|` centre, `|---:|` right.
 - When users ask about fields, reference the structure definition above.
 - **Always wrap every Markdown response in a single fenced code block** (` ```markdown ... ``` `) so the user can copy and paste it directly.
 - Output complete, self-contained templates — never partial snippets unless the user explicitly asks for one.
-- Never suggest HTML, Bootstrap, or chart components — they are not supported in Markdown templates.
+- Never suggest Bootstrap classes or CSS — they have no effect in Markdown templates.
+- Charts and images require inline HTML passthrough — use the div/img patterns documented above, not Markdown image syntax for gallery images.
 """

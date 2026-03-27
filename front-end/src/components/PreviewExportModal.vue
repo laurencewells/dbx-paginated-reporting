@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, shallowRef } from 'vue'
 import { useToastStore } from '@/stores/toast'
 import Mustache from 'mustache'
 import { marked } from 'marked'
 import { previewDataApiV1TemplatesTemplateIdPreviewDataPost } from '@/api/generated'
 import type { PreviewDataResponse } from '@/api/generated'
+import { renderChartsAsSvg } from '@/utils/chartSvg'
 
 const props = defineProps<{
   show: boolean
@@ -22,6 +23,12 @@ const toastStore = useToastStore()
 const previewData = ref<Record<string, unknown>>({})
 const loadingData = ref(false)
 const exporting = ref(false)
+const previewLimit = ref(50)
+
+const _IMG_REF_RE = /src=(["'])img:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\1/gi
+function expandImageRefs(html: string): string {
+  return html.replace(_IMG_REF_RE, 'src=$1/api/v1/images/$2/data$1')
+}
 
 const REPORT_STYLES = `
   @page { size: A4; margin: 10mm; }
@@ -58,53 +65,6 @@ const REPORT_STYLES = `
   }
 `
 
-const CHART_SCRIPT = `
-<script>
-(function(){
-  var VW=560,VH=300;
-  var COLORS=['#3498db','#2ecc71','#9b59b6','#f1c40f','#e74c3c','#1abc9c','#e67e22'];
-  function parse(el){
-    var l=(el.getAttribute('data-labels')||'').replace(/^\\[|\\]$/g,'');
-    var v=(el.getAttribute('data-values')||'').replace(/^\\[|\\]$/g,'');
-    return{labels:l.split(',').map(function(s){return s.trim()}).filter(Boolean),values:v.split(',').map(function(s){return parseFloat(s.trim())}).filter(function(n){return !isNaN(n)})};
-  }
-  function bar(labels,values){
-    var n=labels.length,maxV=Math.max.apply(null,values.concat([0]))||1;
-    var pT=30,pB=50,pL=50,pR=20,cW=VW-pL-pR,cH=VH-pT-pB,gW=cW/n,bW=gW*0.6,many=n>10,fs=many?9:11;
-    var s='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+VW+' '+VH+'" style="width:100%;max-height:'+VH+'px;display:block;">';
-    s+='<line x1="'+pL+'" y1="'+pT+'" x2="'+pL+'" y2="'+(pT+cH)+'" stroke="#ccc"/>';
-    s+='<line x1="'+pL+'" y1="'+(pT+cH)+'" x2="'+(pL+cW)+'" y2="'+(pT+cH)+'" stroke="#ccc"/>';
-    for(var i=0;i<n;i++){
-      var c=COLORS[i%COLORS.length],bH=(values[i]/maxV)*cH,x=(pL+i*gW+(gW-bW)/2).toFixed(1),y=(pT+cH-bH).toFixed(1);
-      s+='<rect x="'+x+'" y="'+y+'" width="'+bW.toFixed(1)+'" height="'+bH.toFixed(1)+'" fill="'+c+'" rx="2"/>';
-      if(!many){var vs=Number.isInteger(values[i])?values[i]:values[i].toFixed(1);s+='<text x="'+(parseFloat(x)+bW/2).toFixed(1)+'" y="'+(parseFloat(y)-4).toFixed(1)+'" text-anchor="middle" font-size="'+fs+'" fill="#555">'+vs+'<\/text>';}
-      var ld=labels[i].length>10?labels[i].slice(0,10)+'\u2026':labels[i],cx=(pL+i*gW+gW/2).toFixed(1);
-      s+='<text x="'+cx+'" y="'+(pT+cH+16)+'" text-anchor="middle" font-size="'+fs+'" fill="#555">'+ld+'<\/text>';
-    }
-    return s+'<\/svg>';
-  }
-  function pie(labels,values){
-    var n=labels.length,total=values.reduce(function(a,b){return a+b},0)||1;
-    var cx=200,cy=150,r=120,lx=340,ly0=60,rh=24,vh=Math.max(VH,60+n*rh+20);
-    var s='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 '+vh+'" style="width:100%;max-height:'+vh+'px;display:block;">';
-    var a=-Math.PI/2;
-    for(var i=0;i<n;i++){
-      var c=COLORS[i%COLORS.length],sw=(values[i]/total)*2*Math.PI;
-      var x1=(cx+r*Math.cos(a)).toFixed(3),y1=(cy+r*Math.sin(a)).toFixed(3);
-      a+=sw;
-      var x2=(cx+r*Math.cos(a)).toFixed(3),y2=(cy+r*Math.sin(a)).toFixed(3);
-      var lg=sw>Math.PI?1:0;
-      s+='<path d="M'+cx+','+cy+' L'+x1+','+y1+' A'+r+','+r+' 0 '+lg+',1 '+x2+','+y2+' Z" fill="'+c+'" stroke="#fff" stroke-width="2"/>';
-      var ly=ly0+i*rh,ld=labels[i].length>14?labels[i].slice(0,14)+'\u2026':labels[i];
-      s+='<rect x="'+lx+'" y="'+(ly-10)+'" width="14" height="14" fill="'+c+'" rx="2"/>';
-      s+='<text x="'+(lx+18)+'" y="'+ly+'" font-size="11" fill="#555">'+ld+'<\/text>';
-    }
-    return s+'<\/svg>';
-  }
-  function renderAll(sel,fn){document.querySelectorAll(sel).forEach(function(el){var d=parse(el);if(!d.labels.length)return;el.innerHTML=fn(d.labels,d.values);});}
-  document.addEventListener('DOMContentLoaded',function(){renderAll('.report-bar-chart',bar);renderAll('.report-pie-chart',pie);});
-})();
-<\/script>`
 
 const MARKDOWN_STYLES = `
   @page { size: A4; margin: 15mm 20mm; }
@@ -146,16 +106,28 @@ function buildDocument(body: string, title: string): string {
 <title>${title}</title>
 ${isMarkdown ? '' : '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">'}
 <style>${isMarkdown ? MARKDOWN_STYLES : REPORT_STYLES}</style>
-</head><body>${body}${isMarkdown ? '' : CHART_SCRIPT}</body></html>`
+</head><body>${body}</body></html>`
 }
 
 const renderedHtml = computed(() => {
   if (!props.htmlContent) return ''
-  try { return renderBody(Mustache.render(props.htmlContent, previewData.value)) } catch { return '' }
+  try { return expandImageRefs(renderBody(Mustache.render(props.htmlContent, previewData.value))) } catch { return '' }
 })
 
+// Chart-rendered version of renderedHtml for the preview iframe.
+// renderChartsAsSvg is async so we can't use a computed — use a ref updated by a watcher.
+const previewHtmlWithCharts = shallowRef('')
+
+watch(renderedHtml, async (html) => {
+  if (!html) { previewHtmlWithCharts.value = ''; return }
+  const tmp = document.createElement('div')
+  tmp.innerHTML = html
+  await renderChartsAsSvg(tmp)
+  previewHtmlWithCharts.value = tmp.innerHTML
+}, { immediate: true })
+
 const previewDocument = computed(() =>
-  renderedHtml.value ? buildDocument(renderedHtml.value, props.templateName ?? 'Report') : ''
+  previewHtmlWithCharts.value ? buildDocument(previewHtmlWithCharts.value, props.templateName ?? 'Report') : ''
 )
 
 async function loadPreview() {
@@ -163,7 +135,7 @@ async function loadPreview() {
   loadingData.value = true
   try {
     const result = (await previewDataApiV1TemplatesTemplateIdPreviewDataPost(
-      props.templateId, { limit: 10 },
+      props.templateId, { limit: previewLimit.value },
     )) as unknown as PreviewDataResponse
     previewData.value = result.data
   } catch {
@@ -184,7 +156,11 @@ async function exportToPdf() {
     const result = (await previewDataApiV1TemplatesTemplateIdPreviewDataPost(
       props.templateId, { limit: 1000 },
     )) as unknown as PreviewDataResponse
-    const doc = buildDocument(renderBody(Mustache.render(props.htmlContent, result.data)), props.templateName ?? 'Report')
+    const bodyHtml = expandImageRefs(renderBody(Mustache.render(props.htmlContent, result.data)))
+    const tmp = document.createElement('div')
+    tmp.innerHTML = bodyHtml
+    await renderChartsAsSvg(tmp)
+    const doc = buildDocument(tmp.innerHTML, props.templateName ?? 'Report')
     const iframe = document.createElement('iframe')
     iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;height:1123px;border:none;visibility:hidden;'
     document.body.appendChild(iframe)
@@ -195,7 +171,8 @@ async function exportToPdf() {
       win.print()
       setTimeout(() => { try { document.body.removeChild(iframe) } catch { /* removed */ } }, 2000)
     }
-  } catch {
+  } catch (e) {
+    console.error('[exportToPdf] failed', e)
     toastStore.warning('Failed to generate PDF')
   } finally {
     exporting.value = false
@@ -223,7 +200,18 @@ async function exportToPdf() {
             <span v-if="loadingData" class="text-muted small">
               <span class="spinner-border spinner-border-sm me-1"></span> Loading data…
             </span>
-            <span v-else class="text-muted small">Preview: 10 rows · Export: full dataset</span>
+            <template v-else>
+              <label class="text-muted small mb-0 me-1">Preview rows</label>
+              <input
+                type="number"
+                class="form-control form-control-sm"
+                style="width: 72px;"
+                v-model.number="previewLimit"
+                min="1"
+                max="10000"
+                @change="loadPreview"
+              />
+            </template>
             <button
               class="btn btn-danger btn-sm"
               @click="exportToPdf"

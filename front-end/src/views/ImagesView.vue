@@ -148,8 +148,7 @@ const lightboxImage = ref<Image | null>(null)
 
 // -- Copy URL -----------------------------------------------------------------
 function copyUrl(image: Image) {
-  const url = `/api/v1/images/${image.id}/data`
-  navigator.clipboard.writeText(url)
+  navigator.clipboard.writeText(`img:${image.id}`)
   toastStore.success('URL copied to clipboard')
 }
 </script>

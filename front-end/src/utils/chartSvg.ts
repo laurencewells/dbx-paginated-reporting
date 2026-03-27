@@ -1,14 +1,22 @@
-// SVG chart generation — geometry constants must match report_renderer.py exactly.
+// Vega-Lite chart rendering — generates inline SVG from .report-bar-chart and
+// .report-pie-chart divs using data-labels / data-values attributes.
+// vega + vega-lite are lazy-loaded so they only hit the bundle when charts are present.
 
-function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+import type { TopLevelSpec } from 'vega-lite'
+import type { ColorScheme } from 'vega'
+
+interface ChartOpts {
+  title?: string
+  colorScheme?: string
+  width?: number
+  height?: number
+  xTitle?: string
+  yTitle?: string
+  sort?: string
+  innerRadius?: number
 }
 
-const VW = 560
-const VH = 300
-const COLORS = ['#3498db', '#2ecc71', '#9b59b6', '#f1c40f', '#e74c3c', '#1abc9c', '#e67e22']
-
-export function parseChartData(el: Element): { labels: string[]; values: number[] } {
+export function parseChartData(el: Element): { labels: string[]; values: number[]; opts: ChartOpts } {
   const l = (el.getAttribute('data-labels') ?? '').replace(/^\[|\]$/g, '')
   const v = (el.getAttribute('data-values') ?? '').replace(/^\[|\]$/g, '')
   const rawLabels = l.split(',').map(s => s.trim())
@@ -16,91 +24,108 @@ export function parseChartData(el: Element): { labels: string[]; values: number[
   const pairs = rawLabels
     .map((label, i) => ({ label, value: rawValues[i] }))
     .filter(p => p.label && !isNaN(p.value))
-  return { labels: pairs.map(p => p.label), values: pairs.map(p => p.value) }
+
+  const opts: ChartOpts = {}
+  const title = el.getAttribute('data-title')
+  const colorScheme = el.getAttribute('data-color-scheme')
+  const width = el.getAttribute('data-width')
+  const height = el.getAttribute('data-height')
+  const xTitle = el.getAttribute('data-x-title')
+  const yTitle = el.getAttribute('data-y-title')
+  const sort = el.getAttribute('data-sort')
+  const innerRadius = el.getAttribute('data-inner-radius')
+
+  if (title) opts.title = title
+  if (colorScheme) opts.colorScheme = colorScheme
+  if (width) opts.width = parseInt(width, 10)
+  if (height) opts.height = parseInt(height, 10)
+  if (xTitle) opts.xTitle = xTitle
+  if (yTitle) opts.yTitle = yTitle
+  if (sort) opts.sort = sort
+  if (innerRadius) opts.innerRadius = parseInt(innerRadius, 10)
+
+  return { labels: pairs.map(p => p.label), values: pairs.map(p => p.value), opts }
 }
 
-export function svgBarChart(labels: string[], values: number[]): string {
-  const n = labels.length
-  if (n === 0) return ''
-  const maxV = Math.max(...values, 0) || 1
-  const pT = 30, pB = 50, pL = 50, pR = 20
-  const cW = VW - pL - pR, cH = VH - pT - pB
-  const gW = cW / n, bW = gW * 0.6
-  const many = n > 10, fs = many ? 9 : 11
-
-  const parts: string[] = [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VW} ${VH}" style="width:100%;max-height:${VH}px;display:block;">`,
-    `<line x1="${pL}" y1="${pT}" x2="${pL}" y2="${pT + cH}" stroke="#ccc"/>`,
-    `<line x1="${pL}" y1="${pT + cH}" x2="${pL + cW}" y2="${pT + cH}" stroke="#ccc"/>`,
-  ]
-
-  for (let i = 0; i < n; i++) {
-    const color = COLORS[i % COLORS.length]
-    const bH = (values[i] / maxV) * cH
-    const x = (pL + i * gW + (gW - bW) / 2).toFixed(1)
-    const y = (pT + cH - bH).toFixed(1)
-    parts.push(`<rect x="${x}" y="${y}" width="${bW.toFixed(1)}" height="${bH.toFixed(1)}" fill="${color}" rx="2"/>`)
-    if (!many) {
-      const vs = Number.isInteger(values[i]) ? values[i] : values[i].toFixed(1)
-      parts.push(
-        `<text x="${(parseFloat(x) + bW / 2).toFixed(1)}" y="${(parseFloat(y) - 4).toFixed(1)}" ` +
-        `text-anchor="middle" font-size="${fs}" fill="#555">${vs}</text>`
-      )
-    }
-    const ld = escapeXml(labels[i].length > 10 ? labels[i].slice(0, 10) + '\u2026' : labels[i])
-    const cx = (pL + i * gW + gW / 2).toFixed(1)
-    parts.push(`<text x="${cx}" y="${pT + cH + 16}" text-anchor="middle" font-size="${fs}" fill="#555">${ld}</text>`)
+function buildBarSpec(labels: string[], values: number[], opts: ChartOpts): TopLevelSpec {
+  return {
+    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+    width: opts.width ?? 500,
+    height: opts.height ?? 250,
+    title: opts.title ?? '',
+    mark: { type: 'bar', cornerRadiusTopLeft: 2, cornerRadiusTopRight: 2 },
+    data: { values: labels.map((label, i) => ({ label, value: values[i] })) },
+    encoding: {
+      x: {
+        field: 'label',
+        type: 'nominal',
+        sort: (opts.sort as 'ascending' | 'descending' | null) ?? null,
+        axis: { labelAngle: -30, title: opts.xTitle ?? null },
+      },
+      y: {
+        field: 'value',
+        type: 'quantitative',
+        axis: { title: opts.yTitle ?? null },
+      },
+      color: {
+        field: 'label',
+        type: 'nominal',
+        scale: { scheme: (opts.colorScheme ?? 'tableau10') as ColorScheme },
+        legend: null,
+      },
+    },
   }
-
-  parts.push('</svg>')
-  return parts.join('')
 }
 
-export function svgPieChart(labels: string[], values: number[]): string {
-  const n = labels.length
-  if (n === 0) return ''
-  const total = values.reduce((a, b) => a + b, 0) || 1
-  const cx = 200, cy = 150, r = 120
-  const lx = 340, ly0 = 60, rh = 24
-  const vh = Math.max(VH, 60 + n * rh + 20)
-
-  const parts: string[] = [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VW} ${vh}" style="width:100%;max-height:${vh}px;display:block;">`,
-  ]
-
-  let angle = -Math.PI / 2
-  for (let i = 0; i < n; i++) {
-    const color = COLORS[i % COLORS.length]
-    const sweep = (values[i] / total) * 2 * Math.PI
-    const x1 = (cx + r * Math.cos(angle)).toFixed(3)
-    const y1 = (cy + r * Math.sin(angle)).toFixed(3)
-    angle += sweep
-    const x2 = (cx + r * Math.cos(angle)).toFixed(3)
-    const y2 = (cy + r * Math.sin(angle)).toFixed(3)
-    const large = sweep > Math.PI ? 1 : 0
-    parts.push(
-      `<path d="M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${large},1 ${x2},${y2} Z" ` +
-      `fill="${color}" stroke="#fff" stroke-width="2"/>`
-    )
-    const ly = ly0 + i * rh
-    const ld = escapeXml(labels[i].length > 14 ? labels[i].slice(0, 14) + '\u2026' : labels[i])
-    parts.push(`<rect x="${lx}" y="${ly - 10}" width="14" height="14" fill="${color}" rx="2"/>`)
-    parts.push(`<text x="${lx + 18}" y="${ly}" font-size="11" fill="#555">${ld}</text>`)
+function buildPieSpec(labels: string[], values: number[], opts: ChartOpts): TopLevelSpec {
+  return {
+    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+    width: opts.width ?? 300,
+    height: opts.height ?? 300,
+    title: opts.title ?? '',
+    mark: { type: 'arc', innerRadius: opts.innerRadius ?? 0 },
+    data: { values: labels.map((label, i) => ({ label, value: values[i] })) },
+    encoding: {
+      theta: { field: 'value', type: 'quantitative' },
+      color: {
+        field: 'label',
+        type: 'nominal',
+        scale: { scheme: (opts.colorScheme ?? 'tableau10') as ColorScheme },
+      },
+    },
   }
-
-  parts.push('</svg>')
-  return parts.join('')
 }
 
-export function renderChartsAsSvg(container: Element): void {
-  container.querySelectorAll('.report-bar-chart').forEach(el => {
-    const { labels, values } = parseChartData(el)
-    if (!labels.length) return
-    el.innerHTML = svgBarChart(labels, values)
-  })
-  container.querySelectorAll('.report-pie-chart').forEach(el => {
-    const { labels, values } = parseChartData(el)
-    if (!labels.length) return
-    el.innerHTML = svgPieChart(labels, values)
-  })
+async function svgFromSpec(spec: TopLevelSpec): Promise<string> {
+  const [vegaMod, vlMod] = await Promise.all([import('vega'), import('vega-lite')])
+  const compiled = vlMod.compile(spec).spec
+  const view = new vegaMod.View(vegaMod.parse(compiled), { renderer: 'none' })
+  return view.toSVG()
+}
+
+export async function renderChartsAsSvg(container: Element): Promise<void> {
+  const barEls = Array.from(container.querySelectorAll('.report-bar-chart'))
+  const pieEls = Array.from(container.querySelectorAll('.report-pie-chart'))
+  if (!barEls.length && !pieEls.length) return
+
+  await Promise.all([
+    ...barEls.map(async el => {
+      const { labels, values, opts } = parseChartData(el)
+      if (!labels.length) return
+      try {
+        el.innerHTML = await svgFromSpec(buildBarSpec(labels, values, opts))
+      } catch (e) {
+        console.warn('[chartSvg] bar chart render failed', e)
+      }
+    }),
+    ...pieEls.map(async el => {
+      const { labels, values, opts } = parseChartData(el)
+      if (!labels.length) return
+      try {
+        el.innerHTML = await svgFromSpec(buildPieSpec(labels, values, opts))
+      } catch (e) {
+        console.warn('[chartSvg] pie chart render failed', e)
+      }
+    }),
+  ])
 }

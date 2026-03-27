@@ -32,8 +32,7 @@ This application enables users to:
 | **Axios** | HTTP client (used by Orval-generated code) |
 | **Mustache.js** | Template rendering with data binding |
 | **marked** | Markdown-to-HTML conversion for Markdown-type templates |
-| **SVG chart rendering** | Inline SVG bar and pie charts (no canvas — works in PDF, email, and browser) |
-| **html2pdf.js** | Client-side PDF generation |
+| **Vega / Vega-Lite** | Inline SVG chart rendering (bar and pie/donut) — works identically in browser preview, PDF export, and email delivery |
 
 ### Back-End
 
@@ -47,6 +46,7 @@ This application enables users to:
 | **Pydantic** | Request/response validation and domain models |
 | **APScheduler** | In-process async cron scheduler for timed report execution |
 | **chevron** | Server-side Mustache template rendering for scheduled reports |
+| **Altair[save]** | Server-side Vega-Lite chart rendering to inline SVG for scheduled/emailed reports (bundles vl-convert-python) |
 | **WeasyPrint** | Server-side HTML-to-PDF conversion for email attachments |
 | **smtplib** | Standard-library SMTP client for email delivery |
 
@@ -286,11 +286,13 @@ Use `.report-page` divs and `<!-- PAGE BREAK -->` comments (available in the Ins
 
 ### Step 3 — Upload Images (optional)
 
-Navigate to **Image Gallery** (requires an active project). Upload logos or assets — drag & drop or click **Upload**. Click the link icon on any image card to copy its `/api/v1/images/{id}/data` URL for use in templates.
+Navigate to **Image Gallery** (requires an active project). Upload logos or assets — drag & drop or click **Upload**. Click the link icon on any image card to copy an `img:UUID` reference for use in templates — e.g. `<img src="img:IMAGE_ID" alt="Logo" />`.
 
 ### Step 4 — Preview & Export
 
 Navigate to **Preview** and select your template from the dropdown. The app fetches real data from your Databricks SQL warehouse, renders it through the template, and displays the paginated result.
+
+The preview fetches up to **50 rows** by default — use the **Preview rows** input in the preview toolbar to increase or decrease this (1–10 000). Charts are rendered as inline SVG in the preview so they look identical to the final PDF.
 
 Click **Export / Print PDF** to open the browser print dialog. Print media styles hide the toolbar so only the report content is printed.
 

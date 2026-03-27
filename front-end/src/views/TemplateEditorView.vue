@@ -150,7 +150,7 @@ async function loadPreviewData(force = false) {
   }
   previewLoading.value = true
   try {
-    const result = (await previewDataApiV1TemplatesTemplateIdPreviewDataPost(activeTemplate.value.id!, { limit: 50 })) as unknown as PreviewDataResponse
+    const result = (await previewDataApiV1TemplatesTemplateIdPreviewDataPost(activeTemplate.value.id!, { limit: 10 })) as unknown as PreviewDataResponse
     previewCache.set(cacheKey, result.data)
     previewDataResult.value = result.data
   } catch {

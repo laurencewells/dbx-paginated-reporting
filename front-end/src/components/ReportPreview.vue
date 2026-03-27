@@ -11,10 +11,17 @@ const props = defineProps<{
 
 // Strip <style> blocks from the HTML before sanitising; they are injected
 // into <head> directly via a managed DOM element (see watchEffect below).
+const _IMG_REF_RE = /src=(["'])img:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\1/gi
+
 const sanitizedHtml = computed(() => {
-  const stripped = props.html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+  const withImages = props.html.replace(_IMG_REF_RE, 'src=$1/api/v1/images/$2/data$1')
+  const stripped = withImages.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
   return DOMPurify.sanitize(stripped, {
-    ADD_ATTR: ['data-labels', 'data-values'],
+    ADD_ATTR: [
+      'data-labels', 'data-values',
+      'data-title', 'data-color-scheme', 'data-width', 'data-height',
+      'data-x-title', 'data-y-title', 'data-sort', 'data-inner-radius',
+    ],
   })
 })
 
@@ -74,20 +81,20 @@ function addPageBreakIndicators() {
   })
 }
 
-function renderCharts() {
-  if (!previewContainer.value || props.templateType === 'markdown') return
-  renderChartsAsSvg(previewContainer.value)
+async function renderCharts() {
+  if (!previewContainer.value) return
+  await renderChartsAsSvg(previewContainer.value)
 }
 
 watch(() => props.html, async () => {
   await nextTick()
-  renderCharts()
+  await renderCharts()
   addPageBreakIndicators()
 })
 
 onMounted(() => {
-  nextTick(() => {
-    renderCharts()
+  nextTick(async () => {
+    await renderCharts()
     addPageBreakIndicators()
   })
 })
