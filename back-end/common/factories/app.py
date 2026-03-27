@@ -45,6 +45,8 @@ class AppFactory:
             self._lakebase = LakebaseFactory()
             await self._lakebase.initialize()
 
+            await self._load_schedules()
+
             yield
 
         except Exception as e:
@@ -63,6 +65,37 @@ class AppFactory:
                 L.info("Scheduler shutdown")
 
             L.info("Application shutdown complete")
+
+    async def _load_schedules(self) -> None:
+        """Load active schedules from DB and register them with APScheduler."""
+        try:
+            from repositories.schedules import SchedulesRepository
+            from routes.v1.schedules import _parse_cron, _run_scheduled_report
+
+            repo = SchedulesRepository()
+
+            interrupted = await repo.mark_interrupted_executions()
+            if interrupted:
+                L.warning(f"[Scheduler] Marked {interrupted} execution(s) as interrupted (leftover from prior restart)")
+
+            active_schedules = await repo.get_all_active()
+            L.info(f"[Scheduler] Loading {len(active_schedules)} active schedule(s) from database")
+            for schedule in active_schedules:
+                try:
+                    cron_kwargs = _parse_cron(schedule.cron_expression)
+                    self.scheduler.add_job(
+                        _run_scheduled_report,
+                        "cron",
+                        id=str(schedule.id),
+                        replace_existing=True,
+                        args=[schedule.id],
+                        **cron_kwargs,
+                    )
+                    L.info(f"[Scheduler] Loaded schedule {schedule.id} ({schedule.cron_expression})")
+                except Exception as e:
+                    L.error(f"[Scheduler] Failed to load schedule {schedule.id}: {e}")
+        except Exception as e:
+            L.warning(f"[Scheduler] Could not load schedules (DB may not be ready): {e}")
 
     def create_app(self) -> FastAPI:
         """

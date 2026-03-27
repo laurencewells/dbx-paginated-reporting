@@ -6,8 +6,11 @@ import { useProjectsStore } from '@/stores/projects'
 import { useToastStore } from '@/stores/toast'
 import ReportPreview from '@/components/ReportPreview.vue'
 import AgentChatPanel from '@/components/AgentChatPanel.vue'
+import PreviewExportModal from '@/components/PreviewExportModal.vue'
 import Mustache from 'mustache'
+import { marked } from 'marked'
 import { html } from '@codemirror/lang-html'
+import { markdown as markdownLang } from '@codemirror/lang-markdown'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView, keymap, placeholder } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
@@ -87,16 +90,19 @@ const showNewTemplateModal = ref(false)
 const newTemplateName = ref('')
 const isCreatingTemplate = ref(false)
 const newTemplateStructureId = ref('')
+const newTemplateType = ref<'html' | 'markdown'>('html')
 
 const showDeleteTemplateModal = ref(false)
 
 const showMustacheHelp = ref(false)
 const showStructureHint = ref(false)
 const showAgentChat = ref(false)
+const showExportModal = ref(false)
 
 const editorEl = ref<HTMLElement>()
 const cmView = ref<EditorView>()
 const editableCompartment = new Compartment()
+const langCompartment = new Compartment()
 
 watch(htmlContent, (newVal) => {
   if (!cmView.value) return
@@ -115,6 +121,9 @@ watch(
   },
 )
 
+
+const currentPageSize = ref<'A4' | 'email'>('A4')
+const currentTemplateType = ref<'html' | 'markdown'>('html')
 
 const previewDataResult = ref<Record<string, unknown>>({})
 const previewLoading = ref(false)
@@ -158,7 +167,11 @@ function getStructureName(structureId: string): string {
 const renderedHtml = computed(() => {
   if (!htmlContent.value) return '<div class="empty-state"><i class="bi bi-eye-slash"></i><p>Start typing to see preview</p></div>'
   try {
-    return Mustache.render(htmlContent.value ?? '', previewDataResult.value)
+    const mustacheOutput = Mustache.render(htmlContent.value ?? '', previewDataResult.value)
+    if (currentTemplateType.value === 'markdown') {
+      return `<div class="markdown-body">${marked.parse(mustacheOutput) as string}</div>`
+    }
+    return mustacheOutput
   } catch (error) {
     return `<div class="alert alert-danger m-3"><i class="bi bi-exclamation-triangle me-2"></i>Template Error: ${error instanceof Error ? error.message : 'Unknown error'}</div>`
   }
@@ -189,6 +202,10 @@ watch(
       htmlContent.value = template.html_content ?? ''
       selectedStructureId.value = template.structure_id
       templateName.value = template.name
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      currentPageSize.value = (template as any).page_size ?? 'A4'
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      currentTemplateType.value = (template as any).template_type ?? 'html'
       lastKnownUpdatedAt.value = template.updated_at
       saveState.value = 'idle'
       loadPreviewData()
@@ -233,10 +250,12 @@ async function autoSave() {
   try {
     const result = await updateTemplateMutation({
       templateId: activeTemplate.value.id,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data: {
         html_content: htmlContent.value,
+        page_size: currentPageSize.value,
         expected_updated_at: lastKnownUpdatedAt.value,
-      },
+      } as any,
     })
     lastKnownUpdatedAt.value = result.updated_at
     saveState.value = 'saved'
@@ -265,17 +284,28 @@ function reloadTemplate() {
   saveState.value = 'idle'
 }
 
+function setPageSize(size: 'A4' | 'email') {
+  if (!activeTemplate.value || isLocked.value || currentPageSize.value === size) return
+  currentPageSize.value = size
+  saveState.value = 'unsaved'
+  if (saveTimeout) clearTimeout(saveTimeout)
+  if (savedFadeTimeout) clearTimeout(savedFadeTimeout)
+  saveTimeout = setTimeout(() => autoSave(), 2000)
+}
+
 async function createTemplate() {
   if (!newTemplateName.value.trim()) { toastStore.warning('Please enter a template name'); return }
   if (!newTemplateStructureId.value) { toastStore.warning('Please select a data structure'); return }
   if (isCreatingTemplate.value) return
   isCreatingTemplate.value = true
   try {
-    const created = await createTemplateMutation({ data: { name: newTemplateName.value.trim(), structure_id: newTemplateStructureId.value } })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const created = await createTemplateMutation({ data: { name: newTemplateName.value.trim(), structure_id: newTemplateStructureId.value, template_type: newTemplateType.value } as any })
     templatesStore.setActiveTemplate(created.id)
     toastStore.success(`Created template "${newTemplateName.value}"`)
     newTemplateName.value = ''
     newTemplateStructureId.value = ''
+    newTemplateType.value = 'html'
     showNewTemplateModal.value = false
   } finally {
     isCreatingTemplate.value = false
@@ -293,6 +323,7 @@ async function saveTemplate() {
         name: templateName.value,
         structure_id: selectedStructureId.value,
         html_content: htmlContent.value,
+        page_size: currentPageSize.value,
         expected_updated_at: lastKnownUpdatedAt.value,
       },
     })
@@ -426,18 +457,19 @@ function handleSnippetInsert(event: CustomEvent) {
 function createEditor() {
   if (!editorEl.value) return
   cmView.value?.destroy()
+  const lang = currentTemplateType.value === 'markdown' ? markdownLang() : html()
   cmView.value = new EditorView({
     parent: editorEl.value,
     state: EditorState.create({
       doc: htmlContent.value,
       extensions: [
-        html(),
+        langCompartment.of(lang),
         oneDark,
         EditorView.lineWrapping,
         EditorState.tabSize.of(2),
         history(),
         keymap.of([...historyKeymap, indentWithTab]),
-        placeholder('Enter your HTML template here...'),
+        placeholder('Enter your template here...'),
         editableCompartment.of(EditorView.editable.of(!!activeTemplate.value && !isLocked.value)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) htmlContent.value = update.state.doc.toString()
@@ -446,6 +478,13 @@ function createEditor() {
     }),
   })
 }
+
+watch(currentTemplateType, (type) => {
+  if (!cmView.value) return
+  cmView.value.dispatch({
+    effects: langCompartment.reconfigure(type === 'markdown' ? markdownLang() : html()),
+  })
+})
 
 watch(editorEl, (el) => {
   if (el) createEditor()
@@ -542,6 +581,14 @@ onUnmounted(() => {
         <button v-if="!isLocked" class="btn btn-sm btn-outline-primary" @click="showNewTemplateModal = true"><i class="bi bi-plus-lg me-1"></i> New</button>
       </div>
       <div v-if="activeTemplate" class="d-flex align-items-center gap-2">
+        <div class="btn-group btn-group-sm" role="group" title="Page size">
+          <button type="button" class="btn" :class="currentPageSize === 'A4' ? 'btn-secondary' : 'btn-outline-secondary'" :disabled="isLocked" @click="setPageSize('A4')">
+            <i class="bi bi-file-earmark me-1"></i>A4
+          </button>
+          <button type="button" class="btn" :class="currentPageSize === 'email' ? 'btn-secondary' : 'btn-outline-secondary'" :disabled="isLocked" @click="setPageSize('email')">
+            <i class="bi bi-envelope me-1"></i>Email
+          </button>
+        </div>
         <div class="btn-group btn-group-sm" role="group">
           <button type="button" class="btn btn-outline-secondary" :class="{ active: splitRatio < 35 }" @click="setSplitRatio(30)" title="More preview"><i class="bi bi-layout-sidebar-reverse"></i></button>
           <button type="button" class="btn btn-outline-secondary" :class="{ active: splitRatio >= 35 && splitRatio <= 65 }" @click="setSplitRatio(50)" title="Equal split"><i class="bi bi-layout-split"></i></button>
@@ -550,11 +597,14 @@ onUnmounted(() => {
         <button class="btn btn-sm" :class="showAgentChat ? 'btn-primary' : 'btn-outline-primary'" @click="showAgentChat = !showAgentChat" title="AI Assistant">
           <i class="bi bi-robot me-1"></i> AI
         </button>
+        <button class="btn btn-sm btn-outline-danger" @click="showExportModal = true" title="Preview & Export">
+          <i class="bi bi-file-earmark-pdf me-1"></i> Export
+        </button>
       </div>
     </div>
 
     <div v-if="activeTemplate" class="template-info-bar mb-2">
-      <div class="d-flex align-items-center gap-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
         <span class="badge bg-primary"><i class="bi bi-file-code me-1"></i> {{ activeTemplate.name }}</span>
         <span class="text-muted">→</span>
         <span class="badge bg-secondary"><i class="bi bi-diagram-3 me-1"></i> {{ getStructureName(selectedStructureId) }}</span>
@@ -578,13 +628,19 @@ onUnmounted(() => {
     <div class="split-view" ref="splitViewRef" :class="{ dragging: isDragging }">
       <div class="split-panel editor-panel" :class="{ 'editor-locked': isLocked }" :style="{ width: `calc(${splitRatio}% - 6px)` }">
         <div class="panel-header" style="background-color: #1a1f36;">
-          <h6 class="panel-title" style="color: #FFF;"><i class="bi bi-code-square me-2"></i> HTML Template</h6>
+          <h6 class="panel-title" style="color: #FFF;">
+            <i :class="['bi', 'me-2', currentTemplateType === 'markdown' ? 'bi-markdown' : 'bi-code-square']"></i>
+            {{ currentTemplateType === 'markdown' ? 'Markdown Template' : 'HTML Template' }}
+          </h6>
           <div class="d-flex align-items-center gap-1">
             <span class="badge bg-secondary">Mustache</span>
+            <span class="badge" :class="currentTemplateType === 'markdown' ? 'bg-info text-dark' : 'bg-primary'">
+              {{ currentTemplateType === 'markdown' ? 'Markdown' : 'HTML' }}
+            </span>
             <span v-if="isLocked" class="badge bg-warning text-dark"><i class="bi bi-lock-fill me-1"></i>Read Only</span>
             <template v-if="!isLocked">
-              <button class="btn-syntax-help" title="Format HTML" @click="formatHtml"><i class="bi bi-braces-asterisk"></i></button>
-              <button class="btn-syntax-help" @click="showMustacheHelp = !showMustacheHelp" title="Mustache syntax help"><i class="bi bi-info-circle"></i></button>
+              <button v-if="currentTemplateType === 'html'" class="btn-syntax-help" title="Format HTML" @click="formatHtml"><i class="bi bi-braces-asterisk"></i></button>
+              <button class="btn-syntax-help" @click="showMustacheHelp = !showMustacheHelp" title="Template syntax help"><i class="bi bi-info-circle"></i></button>
             </template>
           </div>
         </div>
@@ -601,29 +657,32 @@ onUnmounted(() => {
             <div class="syntax-item"><code>{{"\{\{^condition\}\}...\{\{/condition\}\}"}}</code><span>Conditional (falsy)</span></div>
             <div class="syntax-item"><code>{{"\{\{_index\}\}"}}</code><span>Row number (1-based)</span></div>
             <div class="syntax-item"><code>{{"\{\{_total\}\}"}}</code><span>Total row count</span></div>
-            <hr class="my-2">
-            <div class="syntax-section-label">Report Components</div>
-            <div class="syntax-item"><code>.report-page</code><span>Page wrapper (A4 size)</span></div>
-            <div class="syntax-item"><code>.report-tile.tile-primary</code><span>Stat tile — blue</span></div>
-            <div class="syntax-item"><code>.report-tile.tile-success</code><span>Stat tile — green</span></div>
-            <div class="syntax-item"><code>.report-tile.tile-warning</code><span>Stat tile — amber</span></div>
-            <div class="syntax-item"><code>.report-tile.tile-danger</code><span>Stat tile — red</span></div>
-            <div class="syntax-item"><code>.report-table</code><span>Styled data table</span></div>
-            <div class="syntax-item"><code>.report-bar-chart</code><span>Bar chart (data-labels / data-values)</span></div>
-            <div class="syntax-item"><code>.report-pie-chart</code><span>Pie chart (data-labels / data-values)</span></div>
-            <div class="syntax-item"><code>.page-number</code><span>Footer page counter</span></div>
-            <hr class="my-2">
-            <div class="syntax-section-label">Bootstrap 5</div>
-            <p class="syntax-note">Bootstrap 5 is fully available — use any utility or grid class directly in your template.</p>
-            <div class="syntax-item"><code>.row / .col-md-*</code><span>Responsive grid layout</span></div>
-            <div class="syntax-item"><code>.d-flex / .gap-*</code><span>Flexbox utilities</span></div>
-            <div class="syntax-item"><code>.badge / .text-muted</code><span>Typography helpers</span></div>
-            <hr class="my-2">
-            <div class="syntax-section-label">Conditional Styles</div>
-            <div class="syntax-item"><code>{{"\{\{field\}\}"}}</code><span>Use as CSS class suffix</span></div>
-            <p class="syntax-note">Interpolate a field into the class name, then define one CSS rule per value in a <code>&lt;style&gt;</code> block.</p>
-            <div class="syntax-example">
-              <pre>&lt;style&gt;
+
+            <!-- HTML template help -->
+            <template v-if="currentTemplateType === 'html'">
+              <hr class="my-2">
+              <div class="syntax-section-label">Report Components</div>
+              <div class="syntax-item"><code>.report-page</code><span>Page wrapper (A4 size)</span></div>
+              <div class="syntax-item"><code>.report-tile.tile-primary</code><span>Stat tile — blue</span></div>
+              <div class="syntax-item"><code>.report-tile.tile-success</code><span>Stat tile — green</span></div>
+              <div class="syntax-item"><code>.report-tile.tile-warning</code><span>Stat tile — amber</span></div>
+              <div class="syntax-item"><code>.report-tile.tile-danger</code><span>Stat tile — red</span></div>
+              <div class="syntax-item"><code>.report-table</code><span>Styled data table</span></div>
+              <div class="syntax-item"><code>.report-bar-chart</code><span>Bar chart (data-labels / data-values)</span><span class="badge-experimental">Experimental</span></div>
+              <div class="syntax-item"><code>.report-pie-chart</code><span>Pie chart (data-labels / data-values)</span><span class="badge-experimental">Experimental</span></div>
+              <div class="syntax-item"><code>.page-number</code><span>Footer page counter</span></div>
+              <hr class="my-2">
+              <div class="syntax-section-label">Bootstrap 5</div>
+              <p class="syntax-note">Bootstrap 5 is fully available — use any utility or grid class directly in your template.</p>
+              <div class="syntax-item"><code>.row / .col-md-*</code><span>Responsive grid layout</span></div>
+              <div class="syntax-item"><code>.d-flex / .gap-*</code><span>Flexbox utilities</span></div>
+              <div class="syntax-item"><code>.badge / .text-muted</code><span>Typography helpers</span></div>
+              <hr class="my-2">
+              <div class="syntax-section-label">Conditional Styles</div>
+              <div class="syntax-item"><code>{{"\{\{field\}\}"}}</code><span>Use as CSS class suffix</span></div>
+              <p class="syntax-note">Interpolate a field into the class name, then define one CSS rule per value in a <code>&lt;style&gt;</code> block.</p>
+              <div class="syntax-example">
+                <pre>&lt;style&gt;
   .status-approved { background: #198754; color: white; }
   .status-pending  { background: #fd7e14; color: white; }
   .status-rejected { background: #dc3545; color: white; }
@@ -632,13 +691,13 @@ onUnmounted(() => {
 &lt;span class="badge status-{{"\{\{approval_status\}\}"}}"&gt;
   {{"\{\{approval_status\}\}"}}
 &lt;/span&gt;</pre>
-            </div>
-            <p class="syntax-note mt-2">For conditional blocks (not just colour), add boolean columns in your SQL: <code>status = 'approved' AS is_approved</code> then use <code>{{"\{\{#is_approved\}\}"}}</code>.</p>
-            <hr class="my-2">
-            <div class="syntax-section-label">Custom Styles</div>
-            <p class="syntax-note">Add a <code>&lt;style&gt;</code> block at the top of your template for fully custom CSS.</p>
-            <div class="syntax-example">
-              <pre>&lt;style&gt;
+              </div>
+              <p class="syntax-note mt-2">For conditional blocks (not just colour), add boolean columns in your SQL: <code>status = 'approved' AS is_approved</code> then use <code>{{"\{\{#is_approved\}\}"}}</code>.</p>
+              <hr class="my-2">
+              <div class="syntax-section-label">Custom Styles</div>
+              <p class="syntax-note">Add a <code>&lt;style&gt;</code> block at the top of your template for fully custom CSS.</p>
+              <div class="syntax-example">
+                <pre>&lt;style&gt;
   .my-header { background: #1a1f36; color: white; }
 &lt;/style&gt;
 
@@ -648,7 +707,50 @@ onUnmounted(() => {
   &lt;div class="page-number"&gt;{{"\{\{_index\}\}"}} / {{"\{\{_total\}\}"}}&lt;/div&gt;
 &lt;/div&gt;
 {{"\{\{/rows\}\}"}}</pre>
-            </div>
+              </div>
+            </template>
+
+            <!-- Markdown template help -->
+            <template v-else>
+              <hr class="my-2">
+              <div class="syntax-section-label">Markdown Formatting</div>
+              <div class="syntax-item"><code># Heading 1</code><span>H1</span></div>
+              <div class="syntax-item"><code>## Heading 2</code><span>H2</span></div>
+              <div class="syntax-item"><code>**bold** / *italic*</code><span>Emphasis</span></div>
+              <div class="syntax-item"><code>- item</code><span>Unordered list</span></div>
+              <div class="syntax-item"><code>1. item</code><span>Ordered list</span></div>
+              <div class="syntax-item"><code>- [x] / - [ ]</code><span>Task list item</span></div>
+              <div class="syntax-item"><code>&gt; **Label:** {{"\{\{value\}\}"}}</code><span>Stat callout</span></div>
+              <hr class="my-2">
+              <div class="syntax-section-label">Tables (GFM)</div>
+              <p class="syntax-note">Use pipe syntax. Mustache can populate rows dynamically.</p>
+              <div class="syntax-example">
+                <pre>| Name | Value |
+|------|-------|
+{{"\{\{#rows\}\}"}}| {{"\{\{name\}\}"}} | {{"\{\{value\}\}"}} |
+{{"\{\{/rows\}\}"}}</pre>
+              </div>
+              <hr class="my-2">
+              <div class="syntax-section-label">Page Breaks</div>
+              <p class="syntax-note">Inline HTML works in markdown — use this for PDF page breaks.</p>
+              <div class="syntax-example">
+                <pre>&lt;div style="page-break-after: always"&gt;&lt;/div&gt;</pre>
+              </div>
+              <hr class="my-2">
+              <div class="syntax-section-label">Example</div>
+              <div class="syntax-example">
+                <pre># {{"\{\{title\}\}"}}
+
+Generated: {{"\{\{date\}\}"}}
+
+> **Total rows:** {{"\{\{_total\}\}"}}
+
+| Name | Value |
+|------|-------|
+{{"\{\{#rows\}\}"}}| {{"\{\{name\}\}"}} | {{"\{\{value\}\}"}} |
+{{"\{\{/rows\}\}"}}</pre>
+              </div>
+            </template>
           </div>
         </div>
         <pre v-if="isLocked" class="code-readonly">{{ htmlContent }}</pre>
@@ -664,7 +766,7 @@ onUnmounted(() => {
             </span>
           </transition>
         </div>
-        <div class="preview-content"><ReportPreview :html="renderedHtml" /></div>
+        <div class="preview-content"><ReportPreview :html="renderedHtml" :page-size="currentPageSize" :template-type="currentTemplateType" /></div>
       </div>
     </div>
 
@@ -706,6 +808,16 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- Preview & Export Drawer -->
+    <PreviewExportModal
+      v-model:show="showExportModal"
+      :template-id="activeTemplate?.id ?? null"
+      :template-name="activeTemplate?.name ?? null"
+      :html-content="htmlContent"
+      :template-type="currentTemplateType"
+      :structure-name="activeStructure?.name ?? null"
+    />
+
     <!-- New Template Modal -->
     <div v-if="showNewTemplateModal" class="modal d-block" tabindex="-1" style="background: rgba(0,0,0,0.5)">
       <div class="modal-dialog modal-dialog-centered">
@@ -725,6 +837,16 @@ onUnmounted(() => {
                 <option value="" disabled>Select a structure...</option>
                 <option v-for="s in (structures ?? [])" :key="s.id" :value="s.id">{{ s.name }} ({{ s.fields?.length ?? 0 }} fields)</option>
               </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label"><i class="bi bi-file-earmark-text me-1"></i> Template Type</label>
+              <div class="btn-group w-100" role="group">
+                <input type="radio" class="btn-check" name="newTemplateType" id="typeHtml" value="html" v-model="newTemplateType" autocomplete="off">
+                <label class="btn btn-outline-secondary" for="typeHtml"><i class="bi bi-code-square me-1"></i> HTML</label>
+                <input type="radio" class="btn-check" name="newTemplateType" id="typeMarkdown" value="markdown" v-model="newTemplateType" autocomplete="off">
+                <label class="btn btn-outline-secondary" for="typeMarkdown"><i class="bi bi-markdown me-1"></i> Markdown</label>
+              </div>
+              <div class="form-text">Cannot be changed after creation.</div>
             </div>
           </div>
           <div class="modal-footer">
@@ -790,6 +912,7 @@ onUnmounted(() => {
 .syntax-item:last-of-type { border-bottom: none; }
 .syntax-item code { background: #2d2d44; color: #e74c3c; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-family: 'Fira Code', 'Consolas', monospace; }
 .syntax-item span { color: #a0a0a0; font-size: 0.75rem; }
+.badge-experimental { background: #4a3500; color: #f39c12; font-size: 0.65rem; font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.4px; flex-shrink: 0; }
 .syntax-example { margin-top: 0.5rem; }
 .syntax-example strong { color: #e0e0e0; font-size: 0.8rem; }
 .syntax-example pre { background: #2d2d44; color: #a0e0a0; padding: 0.75rem; border-radius: 6px; font-size: 0.7rem; margin-top: 0.5rem; overflow-x: auto; white-space: pre-wrap; font-family: 'Fira Code', 'Consolas', monospace; }

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from 'vue'
-import { Chart, registerables } from 'chart.js'
 import DOMPurify from 'dompurify'
-
-Chart.register(...registerables)
+import { renderChartsAsSvg } from '@/utils/chartSvg'
 
 const props = defineProps<{
   html: string
+  pageSize?: 'A4' | 'email'
+  templateType?: 'html' | 'markdown'
 }>()
 
 // Strip <style> blocks from the HTML before sanitising; they are injected
@@ -44,25 +44,6 @@ watchEffect(() => {
 })
 
 const previewContainer = ref<HTMLElement | null>(null)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const chartInstances = ref<any[]>([])
-
-function destroyCharts() {
-  chartInstances.value.forEach((chart) => {
-    chart.destroy()
-  })
-  chartInstances.value = []
-}
-
-function parseChartData(element: HTMLElement): { labels: string[]; values: number[] } {
-  const labelsStr = (element.getAttribute('data-labels') || '').replace(/^\[|]$/g, '')
-  const valuesStr = (element.getAttribute('data-values') || '').replace(/^\[|]$/g, '')
-
-  const labels = labelsStr.split(',').map((l) => l.trim()).filter(Boolean)
-  const values = valuesStr.split(',').map((v) => v.trim()).filter(Boolean).map(Number)
-
-  return { labels, values }
-}
 
 function addPageBreakIndicators() {
   if (!previewContainer.value) return
@@ -94,107 +75,8 @@ function addPageBreakIndicators() {
 }
 
 function renderCharts() {
-  if (!previewContainer.value) return
-  
-  destroyCharts()
-  
-  // Render Bar Charts
-  const barCharts = previewContainer.value.querySelectorAll('.report-bar-chart')
-  barCharts.forEach((element) => {
-    const { labels, values } = parseChartData(element as HTMLElement)
-    if (labels.length === 0) return
-    
-    const canvas = document.createElement('canvas')
-    canvas.style.maxHeight = '300px'
-    element.innerHTML = ''
-    element.appendChild(canvas)
-    
-    const chart = new Chart(canvas, {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [{
-          label: 'Value',
-          data: values,
-          backgroundColor: [
-            'rgba(52, 152, 219, 0.8)',
-            'rgba(46, 204, 113, 0.8)',
-            'rgba(155, 89, 182, 0.8)',
-            'rgba(241, 196, 15, 0.8)',
-            'rgba(231, 76, 60, 0.8)',
-          ],
-          borderColor: [
-            'rgba(52, 152, 219, 1)',
-            'rgba(46, 204, 113, 1)',
-            'rgba(155, 89, 182, 1)',
-            'rgba(241, 196, 15, 1)',
-            'rgba(231, 76, 60, 1)',
-          ],
-          borderWidth: 1,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: false,
-          },
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-          },
-        },
-      },
-    })
-    
-    chartInstances.value.push(chart)
-  })
-  
-  // Render Pie Charts
-  const pieCharts = previewContainer.value.querySelectorAll('.report-pie-chart')
-  pieCharts.forEach((element) => {
-    const { labels, values } = parseChartData(element as HTMLElement)
-    if (labels.length === 0) return
-    
-    const canvas = document.createElement('canvas')
-    canvas.style.maxHeight = '300px'
-    element.innerHTML = ''
-    element.appendChild(canvas)
-    
-    const chart = new Chart(canvas, {
-      type: 'pie',
-      data: {
-        labels,
-        datasets: [{
-          data: values,
-          backgroundColor: [
-            'rgba(52, 152, 219, 0.8)',
-            'rgba(46, 204, 113, 0.8)',
-            'rgba(155, 89, 182, 0.8)',
-            'rgba(241, 196, 15, 0.8)',
-            'rgba(231, 76, 60, 0.8)',
-            'rgba(26, 188, 156, 0.8)',
-            'rgba(230, 126, 34, 0.8)',
-          ],
-          borderColor: '#fff',
-          borderWidth: 2,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: 'bottom',
-          },
-        },
-      },
-    })
-    
-    chartInstances.value.push(chart)
-  })
+  if (!previewContainer.value || props.templateType === 'markdown') return
+  renderChartsAsSvg(previewContainer.value)
 }
 
 watch(() => props.html, async () => {
@@ -211,13 +93,17 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  destroyCharts()
   headStyleEl.remove()
 })
 </script>
 
 <template>
-  <div ref="previewContainer" class="report-preview-wrapper" v-html="sanitizedHtml"></div>
+  <div
+    ref="previewContainer"
+    class="report-preview-wrapper"
+    :class="[pageSize === 'email' ? 'preview-email' : 'preview-a4', templateType === 'markdown' ? 'preview-markdown' : '']"
+    v-html="sanitizedHtml"
+  ></div>
 </template>
 
 <style scoped>
@@ -405,5 +291,138 @@ onUnmounted(() => {
   margin: 0;
   padding: 0;
   border: none;
+}
+
+/* Email layout — 600px wide, no fixed height per "page" */
+.preview-email :deep(.report-page) {
+  width: 600px;
+  min-height: unset;
+  padding: 24px 32px;
+}
+
+.preview-email :deep(.page-separator-visual) {
+  width: 600px;
+}
+
+/* Email + markdown: constrain to email width */
+.preview-email.preview-markdown :deep(.markdown-body) {
+  max-width: 600px;
+}
+
+/* Markdown layout — document-style, no fixed page dimensions */
+.preview-markdown {
+  padding: 2rem;
+}
+
+.preview-markdown :deep(.markdown-body) {
+  background: white;
+  max-width: 860px;
+  width: 100%;
+  padding: 2.5rem 3rem;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  font-size: 15px;
+  line-height: 1.7;
+  color: #212529;
+}
+
+.preview-markdown :deep(.markdown-body h1),
+.preview-markdown :deep(.markdown-body h2),
+.preview-markdown :deep(.markdown-body h3),
+.preview-markdown :deep(.markdown-body h4),
+.preview-markdown :deep(.markdown-body h5),
+.preview-markdown :deep(.markdown-body h6) {
+  color: #2d3e50;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.preview-markdown :deep(.markdown-body h1) {
+  font-size: 2rem;
+  font-weight: 700;
+  border-bottom: 2px solid #2d3e50;
+  padding-bottom: 0.5rem;
+}
+
+.preview-markdown :deep(.markdown-body h2) {
+  font-size: 1.5rem;
+  border-bottom: 1px solid #dee2e6;
+  padding-bottom: 0.25rem;
+}
+
+.preview-markdown :deep(.markdown-body table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+
+.preview-markdown :deep(.markdown-body table thead) {
+  background: #2d3e50;
+  color: white;
+}
+
+.preview-markdown :deep(.markdown-body table th) {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.preview-markdown :deep(.markdown-body table td) {
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid #eee;
+}
+
+.preview-markdown :deep(.markdown-body table tbody tr:nth-child(even)) {
+  background: #f8f9fa;
+}
+
+.preview-markdown :deep(.markdown-body code) {
+  background: #f3f3f3;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.875em;
+  color: #c0392b;
+}
+
+.preview-markdown :deep(.markdown-body pre) {
+  background: #2d2d44;
+  color: #f8f8f2;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+.preview-markdown :deep(.markdown-body pre code) {
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+
+.preview-markdown :deep(.markdown-body blockquote) {
+  border-left: 4px solid #3498db;
+  margin: 0 0 1rem;
+  padding: 0.5rem 1rem;
+  background: #f0f8ff;
+  color: #555;
+  border-radius: 0 4px 4px 0;
+}
+
+.preview-markdown :deep(.markdown-body blockquote p) {
+  margin: 0;
+}
+
+.preview-markdown :deep(.markdown-body del) {
+  color: #6c757d;
+}
+
+.preview-markdown :deep(.markdown-body hr) {
+  border: none;
+  border-top: 1px solid #dee2e6;
+  margin: 1.5rem 0;
 }
 </style>

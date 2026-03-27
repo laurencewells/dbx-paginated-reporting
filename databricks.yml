@@ -13,6 +13,12 @@ variables:
   volume_name:
     description: "Name of the volume to use"
     default: "app_files"
+  admin_emails:
+    description: "Comma-separated list of admin user emails"
+    default: ""
+  secret_scope_name:
+    description: "Name of the secret scope to use"
+    default: "paginated_reports"
   app_config:
     type: complex
     description: "Configuration for paginated-reports"
@@ -37,6 +43,10 @@ variables:
           value: '${var.catalog_name}'
         - name: 'LAKEHOUSE_SCHEMA_NAME'
           value: '${var.schema_name}'
+        - name: 'ADMIN_EMAILS'
+          value: '${var.admin_emails}'
+        - name: 'SMTP_SECRET_SCOPE'
+          value: '${var.secret_scope_name}'
 
 resources:
   apps:
@@ -65,6 +75,14 @@ resources:
       permissions:
         - user_name: "*"
           level: "CAN_USE"
+  secret_scopes:
+    paginated_reports_smtp_secrets:
+      name: ${var.secret_scope_name}
+      # DABS cannot grant secret scope ACLs to an app service principal at deploy time.
+      # After first deploy, run this once to grant the app access:
+      #   databricks s put-acl paginated_reports_smtp_secrets <app-service-principal> MANAGE
+      # The app service principal name is visible in the App settings page in the Databricks UI.
+
   database_instances:
     paginated_reports_db_instance:
       name: paginated-reports-db-instance
@@ -94,14 +112,14 @@ resources:
       name: ${var.schema_name}
 targets:
   dev:
-    workspace:
-        host: <databricks-workspace-host>
     variables:
       catalog_name: "reporting_data_dev"
       schema_name: "paginated_dev"
       volume_name: "paginated_files_dev"
+      secret_scope_name: "paginated_reports_dev"
   prod:
     variables:
       catalog_name: "reporting_data_prod"
       schema_name: "paginated_prod"
       volume_name: "app_files_prod"
+      secret_scope_name: "paginated_reports_prod"

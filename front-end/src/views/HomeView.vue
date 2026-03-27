@@ -78,16 +78,16 @@ function navigate(path: string) {
       <div class="col-md-3">
         <div class="card h-100 border-0 shadow-sm">
           <div class="card-body text-center p-4">
-            <div class="feature-icon bg-danger bg-gradient text-white rounded-circle mb-3 mx-auto">
-              <i class="bi bi-file-pdf fs-3"></i>
+            <div class="feature-icon bg-warning bg-gradient text-white rounded-circle mb-3 mx-auto">
+              <i class="bi bi-clock fs-3"></i>
             </div>
-            <h5 class="card-title">Export to PDF</h5>
+            <h5 class="card-title">Scheduling</h5>
             <p class="card-text text-muted">
-              Generate professional PDF reports with pagination support
+              Automate report delivery with cron-based schedules and email distribution
             </p>
-            <button class="btn btn-outline-danger" @click="navigate('/preview')">
+            <button class="btn btn-outline-warning" @click="navigate('/schedules')">
               <i class="bi bi-arrow-right me-1"></i>
-              Preview & Export
+              Manage Schedules
             </button>
           </div>
         </div>
@@ -140,9 +140,9 @@ function navigate(path: string) {
             <div class="d-flex">
               <div class="step-number me-3">4</div>
               <div>
-                <h6>Export PDF</h6>
+                <h6>Schedule & Deliver</h6>
                 <p class="text-muted small mb-0">
-                  Preview your report and download as a paginated PDF
+                  Set up cron schedules to automatically email reports to recipients
                 </p>
               </div>
             </div>

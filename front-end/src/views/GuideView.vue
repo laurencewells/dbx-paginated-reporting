@@ -12,6 +12,8 @@ const sections = [
   { id: 'chart-struct',      label: 'Charts from Structs', icon: 'bi-bar-chart' },
   { id: 'conditional-styles',label: 'Conditional Styles',  icon: 'bi-palette' },
   { id: 'images',            label: 'Images',              icon: 'bi-images' },
+  { id: 'markdown',          label: 'Markdown Templates',  icon: 'bi-markdown' },
+  { id: 'scheduling',        label: 'Scheduling',          icon: 'bi-clock-history' },
 ]
 
 // ── Inline syntax tags ────────────────────────────────────────────────────────
@@ -325,6 +327,30 @@ FROM procurement.suppliers`,
 </div>
 {{/rows}}`,
 
+  markdown_basic: `# {{title}}
+
+Generated: {{date}}
+
+> **Total rows:** {{_total}}
+
+---
+
+{{#rows}}
+## {{name}}
+
+| Field | Value |
+|-------|-------|
+| Status | {{status}} |
+| Amount | {{amount}} |
+
+<div style="page-break-after: always"></div>
+{{/rows}}`,
+
+  markdown_table: `| Name | Department | Status |
+|------|-----------|--------|
+{{#rows}}| {{name}} | {{department}} | {{status}} |
+{{/rows}}`,
+
   image_basic: `<img src="/api/v1/images/IMAGE_ID/data" alt="Description" />`,
 
   image_header: `<div class="report-page">
@@ -427,7 +453,7 @@ FROM procurement.suppliers`,
                 <li class="mb-2">Give it a name (e.g. "Q1 Sales Reports") and click <strong>Create</strong>.</li>
                 <li class="mb-2">Click <strong>Open</strong> to set it as your active project — you'll see a banner in the sidebar.</li>
                 <li class="mb-2">Now go to <strong>Data Structures</strong> — any structures you create will automatically belong to this project.</li>
-                <li>Create templates linked to those structures and preview them as usual.</li>
+                <li>Create templates linked to those structures, then use the <strong>Export</strong> button in the Template Editor to preview and export PDF.</li>
               </ol>
             </div>
           </div>
@@ -651,6 +677,9 @@ FROM procurement.suppliers`,
         <!-- ── Charts from Structs ── -->
         <div v-if="activeSection === 'chart-struct'">
           <h4 class="section-title"><i class="bi bi-bar-chart me-2 text-primary"></i>Charts from Struct Columns</h4>
+          <div class="alert alert-success py-2 mb-3">
+            <i class="bi bi-check-circle me-2"></i>Charts render as <strong>inline SVG</strong> — they display identically in the browser preview, PDF export, and email delivery. No JavaScript required at render time.
+          </div>
           <p class="text-muted">Charts read comma-separated strings from <code>data-labels</code> and <code>data-values</code> attributes. There are three ways to feed data in.</p>
 
           <div class="pattern-card mb-4">
@@ -882,6 +911,210 @@ FROM procurement.suppliers`,
           </div>
         </div>
 
+        <!-- ── Markdown Templates ── -->
+        <div v-if="activeSection === 'markdown'">
+          <h4 class="section-title"><i class="bi bi-markdown me-2 text-primary"></i>Markdown Templates</h4>
+          <p class="text-muted">Markdown templates let you write reports in GitHub Flavoured Markdown (GFM) combined with Mustache syntax. The editor switches to a Markdown language mode, and both the live preview and server-side renders parse the Markdown before display.</p>
+
+          <div class="row g-4 mb-4">
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header"><i class="bi bi-check-circle me-2 text-success"></i>When to use Markdown</div>
+                <div class="card-body">
+                  <ul class="small mb-0">
+                    <li class="mb-2">Text-heavy reports — summaries, memos, executive briefings</li>
+                    <li class="mb-2">Simple tables from query data without custom styling</li>
+                    <li class="mb-2">Reports where you want to write content quickly without HTML boilerplate</li>
+                    <li>Situations where the AI assistant's output is primarily prose</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header"><i class="bi bi-x-circle me-2 text-danger"></i>When to use HTML instead</div>
+                <div class="card-body">
+                  <ul class="small mb-0">
+                    <li class="mb-2">Multi-column layouts with Bootstrap grid</li>
+                    <li class="mb-2">Precise per-page styling with custom CSS</li>
+                    <li class="mb-2">KPI tiles, charts, or complex badge styling</li>
+                    <li>Reports that require <code>.report-page</code> divs with controlled page breaks</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-braces me-2"></i>Mustache works the same way</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">All Mustache syntax — <code>{{ t.variable }}</code>, <code>{{ t.section }}</code>, <code>{{ t.inverted }}</code>, dot notation — is evaluated first, then the result is parsed as Markdown. The <code>{{ t.rows_open }}</code> / <code>{{ t.rows_close }}</code> pattern still applies.</p>
+              <pre class="code-block">{{ code.markdown_basic }}</pre>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-table me-2"></i>GFM tables with dynamic rows</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Place the <code>{{ t.rows_open }}</code> loop inside the table body. Each iteration appends a row. Note: the closing <code>{{ t.rows_close }}</code> must sit on its own line.</p>
+              <pre class="code-block">{{ code.markdown_table }}</pre>
+              <div class="alert alert-info mt-3 mb-0 py-2">
+                <i class="bi bi-info-circle me-2"></i>
+                Do not put blank lines between the pipe rows — GFM interprets a blank line as the end of the table.
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-file-break me-2"></i>Page breaks</div>
+            <div class="card-body">
+              <p class="small text-muted mb-2">Inline HTML is allowed inside Markdown templates. Use a div with <code>page-break-after</code> to force a new page in PDF exports and print:</p>
+              <pre class="code-block">&lt;div style="page-break-after: always"&gt;&lt;/div&gt;</pre>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><i class="bi bi-list-check me-2"></i>Supported Markdown features</div>
+            <div class="card-body p-0">
+              <table class="table table-sm mb-0">
+                <thead class="table-dark">
+                  <tr><th>Syntax</th><th>Output</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><code># Heading</code> / <code>## H2</code> / <code>### H3</code></td><td>Heading elements</td></tr>
+                  <tr><td><code>**bold**</code> / <code>*italic*</code></td><td>Strong / emphasis</td></tr>
+                  <tr><td><code>- item</code> / <code>1. item</code></td><td>Unordered / ordered lists</td></tr>
+                  <tr><td><code>- [x] done</code> / <code>- [ ] todo</code></td><td>Task list checkboxes</td></tr>
+                  <tr><td><code>&gt; blockquote</code></td><td>Callout / pull-quote block</td></tr>
+                  <tr><td><code>`code`</code> / <code>```block```</code></td><td>Inline / fenced code</td></tr>
+                  <tr><td><code>| Col | Col |</code> + header separator</td><td>GFM table</td></tr>
+                  <tr><td><code>---</code></td><td>Horizontal rule</td></tr>
+                  <tr><td>Inline HTML</td><td>Passed through (page breaks, images, etc.)</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Scheduling ── -->
+        <div v-if="activeSection === 'scheduling'">
+          <h4 class="section-title"><i class="bi bi-clock-history me-2 text-primary"></i>Scheduling</h4>
+          <p class="text-muted">Schedules automate report rendering on a recurring basis using standard cron expressions. The app's service principal executes the query and renders the template server-side — no user session is required.</p>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-lightning me-2 text-warning"></i>Quick start</div>
+            <div class="card-body">
+              <ol class="mb-0">
+                <li class="mb-2">Make sure the app's service principal has <code>SELECT</code> privilege on every Unity Catalog table used by the report's data structure.</li>
+                <li class="mb-2">Open <strong>Schedules</strong> from the sidebar (an active project must be selected).</li>
+                <li class="mb-2">Click <strong>New Schedule</strong>, choose a data structure and template, set a frequency, and click <strong>Create Schedule</strong>.</li>
+                <li class="mb-2">The schedule is registered immediately. Use the <i class="bi bi-play-fill"></i> button to trigger a test run without waiting for the next cron tick.</li>
+                <li>Switch to the <strong>Execution History</strong> tab and click <i class="bi bi-list-check"></i> on any schedule to review past runs and error messages.</li>
+              </ol>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-exclamation-triangle me-2 text-warning"></i>Service principal requirement</div>
+            <div class="card-body">
+              <p class="small mb-2">
+                Scheduled executions run in the background without a user session. The app queries Databricks using the <strong>service principal credentials</strong> configured in the environment (<code>DATABRICKS_CLIENT_ID</code> / <code>DATABRICKS_CLIENT_SECRET</code> or <code>DATABRICKS_TOKEN</code>).
+              </p>
+              <p class="small mb-0 text-danger fw-semibold">
+                If the service principal does not have <code>SELECT</code> on the relevant UC tables, every scheduled execution will fail with a permissions error.
+              </p>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-calendar-week me-2"></i>Cron expression format</div>
+            <div class="card-body">
+              <p class="small text-muted mb-3">Schedules use standard 5-field cron syntax: <code>minute  hour  day  month  day_of_week</code>.</p>
+              <table class="table table-sm mb-3">
+                <thead class="table-dark">
+                  <tr><th>Expression</th><th>Meaning</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><code>0 9 * * *</code></td><td>Every day at 09:00</td></tr>
+                  <tr><td><code>0 9 * * 1-5</code></td><td>Weekdays (Mon–Fri) at 09:00</td></tr>
+                  <tr><td><code>0 8 * * 1</code></td><td>Every Monday at 08:00</td></tr>
+                  <tr><td><code>0 6 1 * *</code></td><td>1st of every month at 06:00</td></tr>
+                  <tr><td><code>*/15 * * * *</code></td><td>Every 15 minutes</td></tr>
+                  <tr><td><code>30 17 * * 5</code></td><td>Every Friday at 17:30</td></tr>
+                </tbody>
+              </table>
+              <p class="small text-muted mb-0">
+                The schedule builder's <strong>Simple</strong> mode generates a cron expression for you. Switch to <strong>Cron</strong> mode to enter one manually.
+              </p>
+            </div>
+          </div>
+
+          <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-list-check me-2"></i>Execution statuses</div>
+            <div class="card-body p-0">
+              <table class="table table-sm mb-0">
+                <thead class="table-dark">
+                  <tr><th>Status</th><th>Meaning</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><span class="badge bg-primary">running</span></td>
+                    <td>The execution is in progress. The history panel auto-refreshes every 10 seconds while a run is active.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="badge bg-success">success</span></td>
+                    <td>The report rendered without error.</td>
+                  </tr>
+                  <tr>
+                    <td><span class="badge bg-danger">failed</span></td>
+                    <td>The run failed — check the <strong>Error</strong> column for details (missing UC privilege, bad Mustache syntax, warehouse timeout, etc.).</td>
+                  </tr>
+                  <tr>
+                    <td><span class="badge bg-secondary">pending</span></td>
+                    <td>Queued but not yet started.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="row g-4 mb-4">
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header"><i class="bi bi-pencil me-2 text-primary"></i>Editing a schedule</div>
+                <div class="card-body">
+                  <p class="small mb-2">Click the <i class="bi bi-pencil"></i> button to change a schedule's <strong>name</strong>, <strong>cron expression</strong>, or <strong>active</strong> status.</p>
+                  <p class="small mb-2">The linked structure and template cannot be changed after creation — delete and recreate the schedule if you need a different template.</p>
+                  <p class="small mb-0 text-muted">Saving a cron change re-registers the APScheduler job immediately.</p>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="card h-100">
+                <div class="card-header"><i class="bi bi-toggle-on me-2 text-success"></i>Active vs Inactive</div>
+                <div class="card-body">
+                  <p class="small mb-2">Inactive schedules are not registered with the scheduler — they will not fire automatically.</p>
+                  <p class="small mb-2">Toggling a schedule back to <strong>Active</strong> immediately re-registers the cron job with no further action required.</p>
+                  <p class="small mb-0 text-muted">The manual trigger button (<i class="bi bi-play-fill"></i>) works regardless of the active flag.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><i class="bi bi-info-circle me-2 text-info"></i>Tips &amp; limitations</div>
+            <div class="card-body">
+              <ul class="small mb-0">
+                <li class="mb-2">Schedules are scoped to a project — select the project in the sidebar before navigating to the Schedules page.</li>
+                <li class="mb-2">The scheduler runs in the same process as the FastAPI back-end. If the app restarts, all active schedules are automatically re-registered from the database on startup.</li>
+                <li class="mb-2">Execution history is paginated to the last 50 runs by default. Use the offset/limit query parameters on the API if you need older entries.</li>
+                <li class="mb-2">Only the project owner and shared members can create or modify schedules. The <code>check_schedule_project_access</code> guard applies the same access + lock rules as structures and templates.</li>
+                <li>Scheduled renders use a <strong>10,000 row limit</strong> on the SQL query — the same as a full PDF export.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
@@ -975,6 +1208,8 @@ FROM procurement.suppliers`,
 .pattern-badge-1 { background-color: #1565c0; }
 .pattern-badge-2 { background-color: #2e7d32; }
 .pattern-badge-3 { background-color: #e65100; }
+.badge-experimental { background: #fff3cd; color: #856404; border: 1px solid #ffc107; font-size: 0.65rem; font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
+.guide-nav-btn.active .badge-experimental { background: rgba(255,255,255,0.2); color: white; border-color: rgba(255,255,255,0.4); }
 
 /* Approach cards */
 .approach-card {

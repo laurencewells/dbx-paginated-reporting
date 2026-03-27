@@ -23,7 +23,6 @@ export default defineConfig({
             '@codemirror/view',
             'codemirror',
           ],
-          chartjs: ['chart.js'],
           mustache: ['mustache'],
           dompurify: ['dompurify'],
         },

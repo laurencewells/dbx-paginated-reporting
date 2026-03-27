@@ -14,11 +14,13 @@ class Me(BaseModel):
                     "username": "John Doe",
                     "ip": "127.0.0.1",
                     "email": "john.doe@example.com",
+                    "is_admin": False,
                 }
             ]
         },
     )
-    
+
     username: str
     ip: str
     email: EmailStr
+    is_admin: bool = False

@@ -1,7 +1,9 @@
+import re
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 
 from common.authorization import (
     CurrentUser,
@@ -130,6 +132,62 @@ async def delete_template(
     if not deleted:
         raise HTTPException(status_code=404, detail="Template not found")
     await app_cache.delete(f"preview:{template_id}:50")
+
+
+def _safe_filename(name: str) -> str:
+    return re.sub(r'[^\w\-.]', '_', name).strip('_') or "report"
+
+
+@router.get("/{template_id}/render")
+async def render_template_html(
+    template_id: UUID,
+    email: CurrentUser,
+    repo: TemplatesRepo,
+    structures_repo: StructuresRepo,
+    projects_repo: ProjectsRepo,
+):
+    """Server-side render to HTML — for testing scheduled output."""
+    await check_template_read_access(template_id, email, repo, structures_repo, projects_repo)
+    try:
+        from services.report_renderer import build_html_document, inline_images, render_report
+        body, template = await render_report(template_id)
+        body = await inline_images(body)
+        html = build_html_document(body, template.name, include_charts=True)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    filename = _safe_filename(template.name) + ".html"
+    return Response(
+        content=html,
+        media_type="text/html",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{template_id}/render-pdf")
+async def render_template_pdf(
+    template_id: UUID,
+    email: CurrentUser,
+    repo: TemplatesRepo,
+    structures_repo: StructuresRepo,
+    projects_repo: ProjectsRepo,
+):
+    """Server-side render to PDF — for testing scheduled output."""
+    await check_template_read_access(template_id, email, repo, structures_repo, projects_repo)
+    try:
+        from services.report_renderer import render_report_pdf
+        pdf_bytes, template = await render_report_pdf(template_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    filename = _safe_filename(template.name) + ".pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/{template_id}/preview-data", response_model=Dict[str, Any])

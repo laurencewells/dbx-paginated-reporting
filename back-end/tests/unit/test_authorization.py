@@ -17,6 +17,7 @@ from common.authorization import (
     check_project_access,
     check_project_access_and_not_locked,
     check_project_not_locked,
+    check_schedule_project_access,
     check_structure_project_access,
     check_structure_project_not_locked,
     check_structure_read_access,
@@ -26,6 +27,7 @@ from common.authorization import (
     get_user_email,
 )
 from models.project import Project
+from models.schedule import Schedule
 from models.structure import Structure, StructureTable
 from models.template import Template
 
@@ -33,6 +35,7 @@ NOW = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 PID = uuid.uuid4()
 SID = uuid.uuid4()
 TID = uuid.uuid4()
+SCHID = uuid.uuid4()
 
 OWNER_EMAIL = "owner@example.com"
 OTHER_EMAIL = "other@example.com"
@@ -368,3 +371,70 @@ class TestCheckTemplateProjectAccess:
         struct_repo = _struct_repo()
         proj_repo = _proj_repo()
         await check_template_project_access(uuid.uuid4(), OWNER_EMAIL, tmpl_repo, struct_repo, proj_repo)
+
+
+# ---------------------------------------------------------------------------
+# check_schedule_project_access
+# ---------------------------------------------------------------------------
+
+
+def _schedule(project_id=None) -> Schedule:
+    from datetime import datetime, timezone
+    now = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
+    return Schedule(
+        id=SCHID,
+        name="Daily",
+        project_id=project_id or PID,
+        structure_id=SID,
+        template_id=TID,
+        cron_expression="0 9 * * 1",
+        is_active=True,
+        created_by=OWNER_EMAIL,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _sched_repo(**kwargs) -> MagicMock:
+    repo = MagicMock()
+    for attr, val in kwargs.items():
+        setattr(repo, attr, AsyncMock(return_value=val))
+    return repo
+
+
+class TestCheckScheduleProjectAccess:
+    @pytest.mark.asyncio
+    async def test_does_not_raise_when_access_and_unlocked(self):
+        sched_repo = _sched_repo(get_by_id=_schedule())
+        proj_repo = _proj_repo(get_access_and_lock_status=(True, False))
+        await check_schedule_project_access(SCHID, OWNER_EMAIL, sched_repo, proj_repo)
+
+    @pytest.mark.asyncio
+    async def test_raises_403_when_no_access(self):
+        sched_repo = _sched_repo(get_by_id=_schedule())
+        proj_repo = _proj_repo(get_access_and_lock_status=(False, False))
+        with pytest.raises(HTTPException) as exc_info:
+            await check_schedule_project_access(SCHID, OTHER_EMAIL, sched_repo, proj_repo)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_raises_423_when_project_locked(self):
+        sched_repo = _sched_repo(get_by_id=_schedule())
+        proj_repo = _proj_repo(get_access_and_lock_status=(True, True))
+        with pytest.raises(HTTPException) as exc_info:
+            await check_schedule_project_access(SCHID, OWNER_EMAIL, sched_repo, proj_repo)
+        assert exc_info.value.status_code == 423
+
+    @pytest.mark.asyncio
+    async def test_does_not_raise_when_schedule_missing(self):
+        sched_repo = _sched_repo(get_by_id=None)
+        proj_repo = _proj_repo(get_access_and_lock_status=(True, False))
+        await check_schedule_project_access(uuid.uuid4(), OWNER_EMAIL, sched_repo, proj_repo)
+        proj_repo.get_access_and_lock_status.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_checks_project_id_from_schedule(self):
+        sched_repo = _sched_repo(get_by_id=_schedule(project_id=PID))
+        proj_repo = _proj_repo(get_access_and_lock_status=(True, False))
+        await check_schedule_project_access(SCHID, OWNER_EMAIL, sched_repo, proj_repo)
+        proj_repo.get_access_and_lock_status.assert_awaited_once_with(PID, OWNER_EMAIL)

@@ -51,12 +51,14 @@ def _template(
     name: str = "Monthly Report",
     structure_id: uuid.UUID | None = None,
     html_content: str = "<p>{{#rows}}{{revenue}}{{/rows}}</p>",
+    template_type: str = "html",
 ) -> Template:
     return Template(
         id=uuid.uuid4(),
         name=name,
         structure_id=structure_id or uuid.uuid4(),
         html_content=html_content,
+        template_type=template_type,
         created_at=NOW,
         updated_at=NOW,
     )
@@ -158,8 +160,30 @@ class TestBuildReportAgentPrompt:
         assert "Mustache" in prompt
 
     def test_prompt_contains_bootstrap_reference(self):
-        prompt = build_report_agent_prompt(_structure(), _template())
+        prompt = build_report_agent_prompt(_structure(), _template(template_type="html"))
         assert "Bootstrap" in prompt
+
+    def test_html_prompt_does_not_appear_for_markdown_template(self):
+        prompt = build_report_agent_prompt(_structure(), _template(template_type="markdown"))
+        # HTML-specific sections must not appear in the markdown prompt
+        assert "Bootstrap 5 First" not in prompt
+        assert "report-page" not in prompt
+        assert "report-bar-chart" not in prompt
+        assert "report-tile" not in prompt
+
+    def test_markdown_prompt_contains_markdown_reference(self):
+        prompt = build_report_agent_prompt(_structure(), _template(template_type="markdown"))
+        assert "Markdown" in prompt
+        assert "GFM" in prompt
+        assert "pipe syntax" in prompt.lower() or "| Name |" in prompt
+
+    def test_markdown_prompt_instructs_markdown_code_block(self):
+        prompt = build_report_agent_prompt(_structure(), _template(template_type="markdown"))
+        assert "```markdown" in prompt
+
+    def test_html_prompt_instructs_html_code_block(self):
+        prompt = build_report_agent_prompt(_structure(), _template(template_type="html"))
+        assert "```html" in prompt
 
     def test_selected_columns_shows_all_when_empty(self):
         structure = _structure(

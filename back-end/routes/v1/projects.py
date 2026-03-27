@@ -1,9 +1,10 @@
-from typing import List
+from typing import Any, Dict, List
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 
 from common.authorization import CurrentUser, ProjectsRepo
+from common.connectors.lakebase import get_lakebase_connector
 from common.factories.cache import app_cache
 from common.logger import log as L
 from models.project import Project, ProjectCreate, ProjectShare, ProjectShareCreate, ProjectUpdate
@@ -108,6 +109,41 @@ async def delete_project(project_id: UUID, email: CurrentUser, repo: ProjectsRep
         raise
     except RuntimeError:
         L.exception("Failed to delete project")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+
+# -- reports ------------------------------------------------------------------
+
+@router.get("/{project_id}/reports", response_model=List[Dict[str, Any]])
+async def list_project_reports(project_id: UUID, email: CurrentUser, repo: ProjectsRepo):
+    """List all reports (templates + their structure) for a project."""
+    try:
+        await _require_access(repo, project_id, email)
+        connector = get_lakebase_connector()
+        if not connector:
+            raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+        result = await connector.execute_query(
+            "SELECT t.id, t.name, t.page_size, s.id AS structure_id, s.name AS structure_name "
+            "FROM templates t "
+            "JOIN structures s ON t.structure_id = s.id "
+            "WHERE s.project_id = :pid ORDER BY s.name, t.name",
+            {"pid": str(project_id)},
+        )
+        rows = result.fetchall()
+        return [
+            {
+                "template_id": str(r[0]),
+                "template_name": r[1],
+                "page_size": r[2],
+                "structure_id": str(r[3]),
+                "structure_name": r[4],
+            }
+            for r in rows
+        ]
+    except HTTPException:
+        raise
+    except RuntimeError:
+        L.exception("Failed to list project reports")
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
 

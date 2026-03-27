@@ -6,7 +6,8 @@ and simplifies deployment (no need to bundle .sql files separately).
 
 Table creation order respects foreign key dependencies:
   schema → projects → project_shares → structures → templates
-         → conversation_messages → images
+         → conversation_messages → images → schedules → schedule_executions
+         → smtp_connections → email_send_lists → schedule_send_lists
 """
 
 # -- app schema ----------------------------------------------------------------
@@ -77,9 +78,18 @@ CREATE TABLE IF NOT EXISTS templates (
     name VARCHAR(255) NOT NULL,
     structure_id UUID NOT NULL REFERENCES structures(id) ON DELETE CASCADE,
     html_content TEXT NOT NULL DEFAULT '',
+    page_size VARCHAR(50) NOT NULL DEFAULT 'A4',
+    template_type VARCHAR(50) NOT NULL DEFAULT 'html',
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 )"""
+
+# Applied when the templates table already exists (upgrade path)
+ALTER_TEMPLATES_ADD_PAGE_SIZE = """\
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS page_size VARCHAR(50) NOT NULL DEFAULT 'A4'"""
+
+ALTER_TEMPLATES_ADD_TEMPLATE_TYPE = """\
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS template_type VARCHAR(50) NOT NULL DEFAULT 'html'"""
 
 CREATE_TEMPLATES_INDEXES = """\
 CREATE INDEX IF NOT EXISTS idx_templates_structure_id
@@ -127,6 +137,98 @@ CREATE TABLE IF NOT EXISTS images (
 CREATE_IMAGES_INDEXES = """\
 CREATE INDEX IF NOT EXISTS idx_images_project_id
     ON images(project_id)"""
+
+# -- schedules table -----------------------------------------------------------
+
+CREATE_SCHEDULES_TABLE = """\
+CREATE TABLE IF NOT EXISTS schedules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    structure_id UUID NOT NULL REFERENCES structures(id) ON DELETE CASCADE,
+    template_id UUID NOT NULL REFERENCES templates(id) ON DELETE CASCADE,
+    cron_expression VARCHAR(100) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+)"""
+
+CREATE_SCHEDULES_INDEXES = """\
+CREATE INDEX IF NOT EXISTS idx_schedules_project_id
+    ON schedules(project_id);
+
+CREATE INDEX IF NOT EXISTS idx_schedules_is_active
+    ON schedules(is_active)"""
+
+# -- schedule_executions table -------------------------------------------------
+
+CREATE_SCHEDULE_EXECUTIONS_TABLE = """\
+CREATE TABLE IF NOT EXISTS schedule_executions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    schedule_id UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    error_message TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+)"""
+
+CREATE_SCHEDULE_EXECUTIONS_INDEXES = """\
+CREATE INDEX IF NOT EXISTS idx_schedule_executions_schedule_id
+    ON schedule_executions(schedule_id);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_executions_created_at
+    ON schedule_executions(created_at DESC)"""
+
+# -- smtp_connections table ----------------------------------------------------
+
+CREATE_SMTP_CONNECTIONS_TABLE = """\
+CREATE TABLE IF NOT EXISTS smtp_connections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    provider VARCHAR(50) NOT NULL,
+    from_email VARCHAR(255) NOT NULL,
+    smtp_host VARCHAR(255) NOT NULL,
+    smtp_port INTEGER NOT NULL DEFAULT 587,
+    username VARCHAR(255) NOT NULL,
+    secret_scope VARCHAR(255) NOT NULL,
+    secret_key VARCHAR(255) NOT NULL,
+    created_by VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+)"""
+
+# -- email_send_lists table ----------------------------------------------------
+
+CREATE_EMAIL_SEND_LISTS_TABLE = """\
+CREATE TABLE IF NOT EXISTS email_send_lists (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    smtp_connection_id UUID NOT NULL REFERENCES smtp_connections(id) ON DELETE RESTRICT,
+    emails JSONB NOT NULL DEFAULT '[]',
+    created_by VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+)"""
+
+CREATE_EMAIL_SEND_LISTS_INDEXES = """\
+CREATE INDEX IF NOT EXISTS idx_email_send_lists_project_id
+    ON email_send_lists(project_id)"""
+
+# -- schedule_send_lists table -------------------------------------------------
+
+CREATE_SCHEDULE_SEND_LISTS_TABLE = """\
+CREATE TABLE IF NOT EXISTS schedule_send_lists (
+    schedule_id UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+    send_list_id UUID NOT NULL REFERENCES email_send_lists(id) ON DELETE CASCADE,
+    PRIMARY KEY (schedule_id, send_list_id)
+)"""
+
+CREATE_SCHEDULE_SEND_LISTS_INDEXES = """\
+CREATE INDEX IF NOT EXISTS idx_schedule_send_lists_send_list_id
+    ON schedule_send_lists(send_list_id)"""
 
 # -- seed: projects ------------------------------------------------------------
 
@@ -348,8 +450,8 @@ _SUPPLIER_PER_PAGE_HTML = r"""<div class="report-preview">
 
 # Built at import time so the factory can reference a single constant
 SEED_TEMPLATES = (
-    "INSERT INTO templates (id, name, structure_id, html_content) VALUES\n"
-    "('b0000000-0000-0000-0000-000000000001', 'Customer Profiles (Per-Page)', 'a0000000-0000-0000-0000-000000000001', $tmpl$" + _CUSTOMER_PER_PAGE_HTML + "$tmpl$),\n"
-    "('b0000000-0000-0000-0000-000000000002', 'Supplier Profiles (Per-Page)', 'a0000000-0000-0000-0000-000000000002', $tmpl$" + _SUPPLIER_PER_PAGE_HTML + "$tmpl$)\n"
+    "INSERT INTO templates (id, name, structure_id, html_content, page_size) VALUES\n"
+    "('b0000000-0000-0000-0000-000000000001', 'Customer Profiles (Per-Page)', 'a0000000-0000-0000-0000-000000000001', $tmpl$" + _CUSTOMER_PER_PAGE_HTML + "$tmpl$, 'A4'),\n"
+    "('b0000000-0000-0000-0000-000000000002', 'Supplier Profiles (Per-Page)', 'a0000000-0000-0000-0000-000000000002', $tmpl$" + _SUPPLIER_PER_PAGE_HTML + "$tmpl$, 'A4')\n"
     "ON CONFLICT (id) DO NOTHING"
 )

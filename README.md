@@ -12,6 +12,8 @@ This application enables users to:
 - **Manage an Image Gallery**: Upload logos and assets per project and reference them in templates
 - **Query Real Data**: Preview and export reports populated with data queried from Databricks SQL warehouses
 - **Export to PDF**: Generate professional paginated PDF reports
+- **Schedule Reports**: Define cron-based schedules to automatically render and email reports on a recurring basis
+- **Deliver via Email**: Send rendered HTML or PDF reports to configured recipient lists via SMTP
 
 ## Tech Stack
 
@@ -29,7 +31,8 @@ This application enables users to:
 | **Orval** | Auto-generated Vue Query composables from OpenAPI spec |
 | **Axios** | HTTP client (used by Orval-generated code) |
 | **Mustache.js** | Template rendering with data binding |
-| **Chart.js + vue-chartjs** | Interactive charts |
+| **marked** | Markdown-to-HTML conversion for Markdown-type templates |
+| **SVG chart rendering** | Inline SVG bar and pie charts (no canvas — works in PDF, email, and browser) |
 | **html2pdf.js** | Client-side PDF generation |
 
 ### Back-End
@@ -37,11 +40,15 @@ This application enables users to:
 | Technology | Purpose |
 |------------|---------|
 | **FastAPI** | Python async API framework |
-| **Lakebase (PostgreSQL)** | Persistent storage for projects, structures, templates, images, and shares |
-| **Databricks SDK** | Unity Catalog discovery and workspace integration |
+| **Lakebase (PostgreSQL)** | Persistent storage for projects, structures, templates, images, shares, schedules, and email config |
+| **Databricks SDK** | Unity Catalog discovery, workspace integration, and secret store access |
 | **Databricks SQL Connector** | Querying UC tables via SQL warehouse |
 | **Model Serving** | AI agent for Mustache template assistance |
 | **Pydantic** | Request/response validation and domain models |
+| **APScheduler** | In-process async cron scheduler for timed report execution |
+| **chevron** | Server-side Mustache template rendering for scheduled reports |
+| **WeasyPrint** | Server-side HTML-to-PDF conversion for email attachments |
+| **smtplib** | Standard-library SMTP client for email delivery |
 
 ## Getting Started
 
@@ -84,42 +91,58 @@ npm run generate-all
 back-end/
 ├── app.py                          # FastAPI entry point
 ├── common/
-│   ├── authorization.py            # Request-level auth helpers (get_user_email, project/structure/template guards)
+│   ├── authorization.py            # Request-level auth helpers (get_user_email, is_admin, project/structure/template/schedule guards)
 │   ├── authentication/             # Databricks auth (workspace, account, SQL, lakebase)
 │   ├── connectors/                 # Service connectors (SQL, workspace, lakebase, model serving)
+│   ├── email/
+│   │   └── sender.py               # SMTP email delivery (HTML body + PDF attachment variant)
 │   ├── factories/                  # App, scheduler, lakebase factories
 │   ├── config.py                   # Environment configuration
 │   └── logger.py                   # Shared logger
 ├── migrations/                     # SQL table definitions, upgrades, and seed data
 ├── models/                         # Pydantic domain models
+│   ├── me.py                       # Me (current user info including is_admin)
 │   ├── project.py                  # Project, ProjectCreate, ProjectUpdate, ProjectShare, ProjectShareCreate
 │   ├── image.py                    # Image, ImageCreate, ImageUpdate
 │   ├── structure.py                # Structure, StructureTable, StructureRelationship, StructureField
-│   └── template.py                 # Template
+│   ├── template.py                 # Template
+│   ├── schedule.py                 # Schedule, ScheduleCreate, ScheduleUpdate, ScheduleExecution, ExecutionStatus
+│   ├── smtp_connection.py          # SmtpConnection, SmtpConnectionCreate, SmtpConnectionUpdate
+│   └── email_send_list.py          # EmailSendList, EmailSendListCreate, EmailSendListUpdate
 ├── repositories/                   # Data access layer (Lakebase)
 │   ├── projects.py                 # Project + share CRUD, user_has_access
 │   ├── images.py                   # Image CRUD + binary data storage
 │   ├── structures.py
-│   └── templates.py
+│   ├── templates.py
+│   ├── schedules.py                # Schedule + execution CRUD, APScheduler job sync
+│   ├── smtp_connections.py         # SMTP connection CRUD
+│   └── email_send_lists.py         # Send list CRUD, get_by_ids for multi-list lookups
 ├── services/
 │   ├── agent.py                    # AI chat via Model Serving
 │   ├── data_query.py               # Query UC tables for report data
 │   ├── discovery.py                # Unity Catalog browsing
 │   ├── query_builder.py            # Auto-generate SQL from tables + relationships
-│   └── prompt_builder.py           # Context-aware agent prompt generation
+│   ├── prompt_builder.py           # Context-aware agent prompt generation
+│   └── report_renderer.py          # Server-side Mustache render + WeasyPrint PDF for scheduled jobs
 └── routes/v1/
+    ├── me.py                       # GET /me — current user info and admin status
     ├── projects.py                 # CRUD /projects + /projects/{id}/shares
     ├── images.py                   # CRUD /images + GET /images/{id}/data (binary serve)
     ├── structures.py               # CRUD /structures + POST /structures/{id}/build
     ├── templates.py                # CRUD /templates + preview-data/report-data
     ├── discovery.py                # GET /discovery/catalogs/.../tables/.../columns
-    └── agent.py                    # POST /agent/chat, WS /agent/ws
+    ├── agent.py                    # POST /agent/chat, WS /agent/ws
+    ├── schedules.py                # CRUD /schedules + executions + manual run trigger
+    ├── smtp_connections.py         # CRUD /smtp-connections (admin only for write operations)
+    └── email_send_lists.py         # CRUD /send-lists (per-project)
 
 front-end/
 ├── src/
 │   ├── api/
 │   │   ├── axios-instance.ts       # Axios config for API calls
 │   │   └── generated/              # Orval-generated Vue Query composables + models
+│   ├── components/
+│   │   └── CronDescription.vue     # Human-readable cron expression display
 │   ├── stores/
 │   │   ├── projects.ts             # Active project state
 │   │   ├── dataStructures.ts       # UI state only (activeStructureId)
@@ -129,7 +152,8 @@ front-end/
 │       ├── ImagesView.vue          # Image gallery (upload, rename, copy URL, delete)
 │       ├── DataStructuresView.vue
 │       ├── TemplateEditorView.vue
-│       └── PreviewView.vue
+│       ├── SchedulesView.vue       # Schedule management (create, edit, toggle, run, view executions)
+│       └── SettingsView.vue        # Admin: SMTP connections and email send lists
 ├── orval.config.ts                 # Orval API generation config
 └── vite.config.ts                  # Vite with API proxy
 ```
@@ -140,6 +164,12 @@ front-end/
 
 User identity is derived from the `X-Forwarded-Email` header injected by the Databricks Apps runtime. The `get_user_email()` helper in `common/authorization.py` reads this header on every request. In local development (`ENV=DEV`), it falls back to a fixed dev email if the header is absent.
 
+### Admin Authorization
+
+Some operations (managing SMTP connections) are restricted to admin users. Admins are defined by the `ADMIN_EMAILS` environment variable — a comma-separated list of email addresses. The `is_admin(email)` helper checks membership, and the `require_admin` FastAPI dependency raises `403` for non-admins. The `AdminUser` annotated type is used in route signatures to enforce this automatically.
+
+The `/api/v1/me` endpoint returns an `is_admin` boolean so the front-end can conditionally show admin-only UI.
+
 ### Authorization Guards
 
 `common/authorization.py` provides a set of reusable async guard functions used by route handlers:
@@ -147,6 +177,8 @@ User identity is derived from the `X-Forwarded-Email` header injected by the Dat
 | Guard | Effect |
 |-------|--------|
 | `get_user_email(request)` | Extracts user email; raises `401` if missing |
+| `is_admin(email)` | Returns `True` if the email is in `ADMIN_EMAILS` |
+| `require_admin(email)` | Raises `403` if the user is not an admin |
 | `check_project_access(project_id, email)` | Raises `403` if user is not owner or a shared member |
 | `check_project_not_locked(project_id)` | Raises `423` if the project is locked |
 | `check_structure_read_access(structure_id, email)` | Access check via the structure's project |
@@ -155,6 +187,7 @@ User identity is derived from the `X-Forwarded-Email` header injected by the Dat
 | `check_template_read_access(template_id, email)` | Access check via template → structure → project |
 | `check_template_project_not_locked(template_id)` | Lock check via template → structure → project |
 | `check_template_project_access(template_id, email)` | Access + lock check via template → structure → project |
+| `check_schedule_project_access(schedule_id, email)` | Access + lock check via schedule → project |
 
 ### Project Ownership and Sharing
 
@@ -187,7 +220,7 @@ Upload restrictions:
 
 ## How to Use the App
 
-The app has six main sections accessible from the sidebar: **Home**, **Projects**, **Data Structures**, **Template Editor**, **Preview**, and **Image Gallery**.
+The app has eight main sections accessible from the sidebar: **Home**, **Projects**, **Data Structures**, **Template Editor**, **Preview**, **Image Gallery**, **Schedules**, and **Settings** (admin only).
 
 ### Step 0 — Create a Project
 
@@ -227,6 +260,13 @@ Useful tools in the editor:
 
 Templates auto-save as you type. Use **Save** to save manually, or **Delete** to remove a template.
 
+#### Template types
+
+When creating a template, choose between **HTML** (default) or **Markdown**:
+
+- **HTML** — full Bootstrap 5 layout, custom CSS, `.report-page` divs, and page break control. Best for complex multi-column designs.
+- **Markdown** — write GitHub Flavoured Markdown (headings, bold, tables, lists) combined with Mustache syntax. The server and preview both render Markdown via `marked`. Best for text-heavy reports where layout complexity is low. Inline HTML (including page-break divs) is supported inside Markdown templates.
+
 #### Mustache basics
 
 ```html
@@ -254,6 +294,34 @@ Navigate to **Preview** and select your template from the dropdown. The app fetc
 
 Click **Export / Print PDF** to open the browser print dialog. Print media styles hide the toolbar so only the report content is printed.
 
+### Step 5 — Schedule Automated Delivery
+
+Navigate to **Schedules** and click **New Schedule** (requires an active project).
+
+1. Give the schedule a name and select the template to render.
+2. Enter a 5-field cron expression (e.g. `0 8 * * 1` for every Monday at 8 AM). A human-readable description is shown below the field.
+3. Optionally attach one or more **send lists** — the report will be emailed to all recipients in those lists on each run.
+4. Toggle **Active** to enable or disable the schedule without deleting it.
+5. Use the **Run now** button to trigger a manual execution immediately.
+
+The **Executions** panel on each schedule card shows the history of runs with status (`pending` / `running` / `success` / `failed`) and any error messages.
+
+Scheduled reports are rendered server-side using the app's service principal credentials — no user token is required at execution time.
+
+### Step 6 — Configure Email (Admin Only)
+
+Admins (users listed in `ADMIN_EMAILS`) have access to the **Settings** page. Here you can manage:
+
+#### SMTP Connections
+
+Click **New Connection** to add an SMTP server. Supported providers have defaults pre-filled (Gmail / G Suite, SendGrid). The password is stored in Databricks Secrets (scope configured by `SMTP_SECRET_SCOPE`) — it is never stored in Lakebase.
+
+You cannot delete an SMTP connection that is referenced by an active send list — remove or reassign those lists first.
+
+#### Email Send Lists
+
+Send lists are per-project groups of email recipients linked to an SMTP connection. Create a send list, enter recipient email addresses, and attach it to one or more schedules. When a scheduled report runs, it sends the rendered HTML email (or PDF attachment) to all addresses in the attached lists.
+
 ### Reference: the Guide
 
 The **Guide** page (accessible from the sidebar) contains a full reference for:
@@ -261,7 +329,8 @@ The **Guide** page (accessible from the sidebar) contains a full reference for:
 - Projects — ownership, sharing, locking, and permissions
 - Mustache syntax patterns
 - Flat tables, struct fields, and arrays of structs
-- Building bar and pie charts from Unity Catalog data
+- Markdown templates — GFM syntax, tables, and Mustache integration
+- Building bar and pie charts from Unity Catalog data (inline SVG — works in PDF, email, and browser)
 - Conditional styling using SQL-derived boolean columns
 - Images — uploading, referencing, and limitations
 
@@ -275,6 +344,8 @@ The **Guide** page (accessible from the sidebar) contains a full reference for:
 4. **Create template** -- Write Mustache HTML, use AI agent for help, reference uploaded images
 5. **Preview** -- Fetches limited real data from the structure's auto-generated query
 6. **Export** -- Fetches full dataset and renders paginated PDF
+7. **Schedule** -- Define cron schedules to auto-render and email reports; track execution history
+8. **Configure email** (admin) -- Set up SMTP connections and per-project send lists
 
 ## Data Structure Design
 
@@ -389,6 +460,8 @@ LAKEBASE_SCHEMA=app               # Schema name (default: app)
 MODEL_SERVING_ENDPOINT=           # Defaults to databricks-claude-sonnet-4-6
 LAKEHOUSE_CATALOG_NAME=           # Unity Catalog catalog for data discovery
 LAKEHOUSE_SCHEMA_NAME=            # Unity Catalog schema for data discovery
+ADMIN_EMAILS=                     # Comma-separated list of admin user emails (can manage SMTP connections)
+SMTP_SECRET_SCOPE=paginated-reports-smtp  # Databricks Secret scope for SMTP passwords (default shown)
 ```
 
 ## License
