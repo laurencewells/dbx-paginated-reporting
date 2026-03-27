@@ -26,7 +26,7 @@ class Template(BaseModel):
 class TemplateCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     structure_id: UUID
     html_content: str = ""
     page_size: PageSize = "A4"

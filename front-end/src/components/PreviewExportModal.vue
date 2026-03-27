@@ -140,6 +140,7 @@ async function loadPreview() {
     previewData.value = result.data
   } catch {
     previewData.value = {}
+    toastStore.error('Failed to load preview data')
   } finally {
     loadingData.value = false
   }
@@ -171,9 +172,8 @@ async function exportToPdf() {
       win.print()
       setTimeout(() => { try { document.body.removeChild(iframe) } catch { /* removed */ } }, 2000)
     }
-  } catch (e) {
-    console.error('[exportToPdf] failed', e)
-    toastStore.warning('Failed to generate PDF')
+  } catch {
+    toastStore.error('Failed to generate PDF')
   } finally {
     exporting.value = false
   }

@@ -114,8 +114,8 @@ export async function renderChartsAsSvg(container: Element): Promise<void> {
       if (!labels.length) return
       try {
         el.innerHTML = await svgFromSpec(buildBarSpec(labels, values, opts))
-      } catch (e) {
-        console.warn('[chartSvg] bar chart render failed', e)
+      } catch {
+        // Leave the div empty — the chart simply won't render
       }
     }),
     ...pieEls.map(async el => {
@@ -123,8 +123,8 @@ export async function renderChartsAsSvg(container: Element): Promise<void> {
       if (!labels.length) return
       try {
         el.innerHTML = await svgFromSpec(buildPieSpec(labels, values, opts))
-      } catch (e) {
-        console.warn('[chartSvg] pie chart render failed', e)
+      } catch {
+        // Leave the div empty — the chart simply won't render
       }
     }),
   ])

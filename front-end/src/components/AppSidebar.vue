@@ -36,7 +36,7 @@ const { data: projectsList } = useListProjectsApiV1ProjectsGet()
 const activeStructureId = computed(() => dataStore.activeStructureId)
 const activeTemplateId = computed(() => templatesStore.activeTemplateId)
 const activeTemplateType = computed(() =>
-  (templates.value?.find(t => t.id === activeTemplateId.value) as any)?.template_type ?? 'html'
+  templates.value?.find(t => t.id === activeTemplateId.value)?.template_type ?? 'html'
 )
 
 const activeProjectName = computed(() =>
@@ -365,7 +365,7 @@ function insertComponent(snippet: string) {
             <i class="bi bi-folder2-open flex-shrink-0"></i>
             <span class="project-banner-name text-truncate">{{ activeProjectName }}</span>
           </div>
-          <button class="btn btn-sm btn-link text-white p-0" title="Clear project filter" @click.stop="clearProject">
+          <button class="btn btn-sm btn-link text-white p-0" title="Clear project filter" aria-label="Clear project filter" @click.stop="clearProject">
             <i class="bi bi-x-lg"></i>
           </button>
         </div>
@@ -577,26 +577,26 @@ function insertComponent(snippet: string) {
 
     <!-- Collapsed state icons -->
     <div class="sidebar-collapsed-icons" v-show="collapsed">
-      <button class="collapsed-icon-btn" @click="goToProjects" title="Projects">
+      <button class="collapsed-icon-btn" @click="goToProjects" title="Projects" aria-label="Projects">
         <i class="bi bi-folder2-open"></i>
       </button>
-      <button class="collapsed-icon-btn" @click="goToGuide" title="Guide">
+      <button class="collapsed-icon-btn" @click="goToGuide" title="Guide" aria-label="Guide">
         <i class="bi bi-book"></i>
       </button>
-      <button class="collapsed-icon-btn" @click="goToDataStructures" title="Data Structures">
+      <button class="collapsed-icon-btn" @click="goToDataStructures" title="Data Structures" aria-label="Data Structures">
         <i class="bi bi-diagram-3"></i>
       </button>
-      <button class="collapsed-icon-btn" @click="goToTemplateEditor" title="Templates">
+      <button class="collapsed-icon-btn" @click="goToTemplateEditor" title="Templates" aria-label="Templates">
         <i class="bi bi-code-square"></i>
       </button>
-      <button class="collapsed-icon-btn" @click="goToPreview" title="Preview & Export">
+      <button class="collapsed-icon-btn" @click="goToPreview" title="Preview & Export" aria-label="Preview & Export">
         <i class="bi bi-file-earmark-pdf"></i>
       </button>
-      <button class="collapsed-icon-btn" @click="goToImages" title="Image Gallery">
+      <button class="collapsed-icon-btn" @click="goToImages" title="Image Gallery" aria-label="Image Gallery">
         <i class="bi bi-images"></i>
       </button>
       <div class="collapsed-icons-bottom">
-        <button class="collapsed-icon-btn" :class="{ active: route.path === '/settings' }" @click="goToSettings" title="Settings">
+        <button class="collapsed-icon-btn" :class="{ active: route.path === '/settings' }" @click="goToSettings" title="Settings" aria-label="Settings">
           <i class="bi bi-gear"></i>
         </button>
       </div>

@@ -155,6 +155,7 @@ async function loadPreviewData(force = false) {
     previewDataResult.value = result.data
   } catch {
     previewDataResult.value = {}
+    toastStore.error('Failed to load preview data')
   } finally {
     previewLoading.value = false
   }
@@ -202,10 +203,8 @@ watch(
       htmlContent.value = template.html_content ?? ''
       selectedStructureId.value = template.structure_id
       templateName.value = template.name
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      currentPageSize.value = (template as any).page_size ?? 'A4'
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      currentTemplateType.value = (template as any).template_type ?? 'html'
+      currentPageSize.value = template.page_size ?? 'A4'
+      currentTemplateType.value = template.template_type ?? 'html'
       lastKnownUpdatedAt.value = template.updated_at
       saveState.value = 'idle'
       loadPreviewData()
@@ -250,12 +249,11 @@ async function autoSave() {
   try {
     const result = await updateTemplateMutation({
       templateId: activeTemplate.value.id,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data: {
         html_content: htmlContent.value,
         page_size: currentPageSize.value,
         expected_updated_at: lastKnownUpdatedAt.value,
-      } as any,
+      },
     })
     lastKnownUpdatedAt.value = result.updated_at
     saveState.value = 'saved'
@@ -299,8 +297,7 @@ async function createTemplate() {
   if (isCreatingTemplate.value) return
   isCreatingTemplate.value = true
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const created = await createTemplateMutation({ data: { name: newTemplateName.value.trim(), structure_id: newTemplateStructureId.value, template_type: newTemplateType.value } as any })
+    const created = await createTemplateMutation({ data: { name: newTemplateName.value.trim(), structure_id: newTemplateStructureId.value, template_type: newTemplateType.value } })
     templatesStore.setActiveTemplate(created.id)
     toastStore.success(`Created template "${newTemplateName.value}"`)
     newTemplateName.value = ''

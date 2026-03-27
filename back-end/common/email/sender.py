@@ -11,6 +11,7 @@ Provider routing:
 """
 import asyncio
 import base64 as _base64
+import os
 import smtplib
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -19,7 +20,7 @@ from typing import List
 
 from common.logger import log as L
 
-_SMTP_TIMEOUT_SECONDS = 30
+_SMTP_TIMEOUT_SECONDS = int(os.getenv("SMTP_TIMEOUT_SECONDS", "30"))
 
 
 async def _run_blocking(func, *args):
