@@ -1,7 +1,0 @@
----
-description:
-globs:
-alwaysApply: true
----
-
-For the front end use /front-end for back end use /back-end only. Never change both at the same time

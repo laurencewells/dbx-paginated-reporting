@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from 'vue'
 import DOMPurify from 'dompurify'
-import { renderChartsAsSvg } from '@/utils/chartSvg'
+import { renderChartsAsSvg, processLayoutMagic } from '@/utils/chartSvg'
 
 const props = defineProps<{
   html: string
@@ -11,22 +11,34 @@ const props = defineProps<{
 
 // Strip <style> blocks from the HTML before sanitising; they are injected
 // into <head> directly via a managed DOM element (see watchEffect below).
+const _IMG_REF_RE = /src=(["'])img:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\1/gi
+
 const sanitizedHtml = computed(() => {
-  const stripped = props.html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+  const withImages = props.html.replace(_IMG_REF_RE, 'src=$1/api/v1/images/$2/data$1')
+  const stripped = withImages.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
   return DOMPurify.sanitize(stripped, {
-    ADD_ATTR: ['data-labels', 'data-values'],
+    ADD_ATTR: [
+      'data-labels', 'data-values',
+      'data-title', 'data-color-scheme', 'data-width', 'data-height',
+      'data-x-title', 'data-y-title', 'data-sort', 'data-inner-radius',
+      'data-break-after',
+    ],
   })
 })
 
-// Sanitize extracted CSS by stripping the vectors that can load external
-// resources or execute code. Safe presentational properties are untouched.
+// Sanitize extracted CSS by stripping vectors that can load external resources
+// or execute code. Safe presentational properties are untouched.
 function sanitizeCss(css: string): string {
   return css
-    .replace(/@import\s[^;]+;?/gi, '')               // no external imports
+    .replace(/@import\s[^;]+;?/gi, '')                              // no external imports
     .replace(/url\s*\(\s*(['"]?)(?!data:image\/)[^)]*\1\s*\)/gi, 'none') // no external urls (data:image allowed)
-    .replace(/expression\s*\([^)]*\)/gi, 'none')      // IE expression()
-    .replace(/javascript\s*:/gi, '')                  // javascript: URIs
-    .replace(/-moz-binding\s*:[^;]+/gi, '')           // Firefox XBL binding
+    .replace(/expression\s*\([^)]*\)/gi, 'none')                    // IE expression()
+    .replace(/javascript\s*:/gi, '')                                 // javascript: URIs
+    .replace(/vbscript\s*:/gi, '')                                   // vbscript: URIs
+    .replace(/-moz-binding\s*:[^;]+/gi, '')                         // Firefox XBL binding
+    .replace(/behavior\s*:[^;]+/gi, '')                             // IE behavior
+    .replace(/-o-link\s*:[^;]+/gi, '')                              // Opera -o-link binding
+    .replace(/-o-link-source\s*:[^;]+/gi, '')                       // Opera -o-link-source
 }
 
 // Inject template <style> blocks as a real <head> stylesheet so the browser
@@ -72,24 +84,38 @@ function addPageBreakIndicators() {
       pb.after(separator)
     }
   })
+
+  // Add visual indicators before .page-break-before elements
+  const pageBreakBefores = previewContainer.value.querySelectorAll('.page-break-before')
+  pageBreakBefores.forEach((pb) => {
+    if (!pb.previousElementSibling?.classList.contains('page-separator-visual')) {
+      const separator = document.createElement('div')
+      separator.className = 'page-separator-visual'
+      separator.innerHTML = `<span>— Page Break —</span>`
+      pb.before(separator)
+    }
+  })
 }
 
-function renderCharts() {
-  if (!previewContainer.value || props.templateType === 'markdown') return
-  renderChartsAsSvg(previewContainer.value)
+async function renderCharts() {
+  if (!previewContainer.value) return
+  await renderChartsAsSvg(previewContainer.value)
+}
+
+async function runRenderPipeline() {
+  if (!previewContainer.value) return
+  processLayoutMagic(previewContainer.value)
+  await renderCharts()
+  addPageBreakIndicators()
 }
 
 watch(() => props.html, async () => {
   await nextTick()
-  renderCharts()
-  addPageBreakIndicators()
+  await runRenderPipeline()
 })
 
 onMounted(() => {
-  nextTick(() => {
-    renderCharts()
-    addPageBreakIndicators()
-  })
+  nextTick(async () => { await runRenderPipeline() })
 })
 
 onUnmounted(() => {
@@ -291,6 +317,47 @@ onUnmounted(() => {
   margin: 0;
   padding: 0;
   border: none;
+}
+
+.report-preview-wrapper :deep(.page-break-before) {
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.report-preview-wrapper :deep(.no-break) {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.report-preview-wrapper :deep(.report-columns-2) {
+  column-count: 2;
+  column-gap: 2rem;
+}
+
+.report-preview-wrapper :deep(.report-columns-3) {
+  column-count: 3;
+  column-gap: 1.5rem;
+}
+
+.report-preview-wrapper :deep(.report-columns-4) {
+  column-count: 4;
+  column-gap: 1rem;
+}
+
+.report-preview-wrapper :deep(.report-global-header) {
+  border-bottom: 2px solid #2d3e50;
+  padding-bottom: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.report-preview-wrapper :deep(.report-global-footer) {
+  border-top: 1px solid #dee2e6;
+  padding-top: 0.75rem;
+  margin-top: 1.5rem;
+  font-size: 0.8rem;
+  color: #6c757d;
 }
 
 /* Email layout — 600px wide, no fixed height per "page" */

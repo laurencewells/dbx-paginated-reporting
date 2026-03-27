@@ -3,48 +3,22 @@ import { ref, computed } from 'vue'
 import { useToastStore } from '@/stores/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
 import { useGetMe } from '@/api/generated/default/default'
-import axios from 'axios'
+import {
+  listSmtpConnectionsApiV1SmtpConnectionsGet,
+  createSmtpConnectionApiV1SmtpConnectionsPost,
+  updateSmtpConnectionApiV1SmtpConnectionsConnectionIdPut,
+  deleteSmtpConnectionApiV1SmtpConnectionsConnectionIdDelete,
+} from '@/api/generated/smtp-connections/smtp-connections'
+import type { SmtpConnectionPublic, SmtpConnectionCreate, SmtpConnectionUpdate } from '@/api/generated'
 
 const toastStore = useToastStore()
 const queryClient = useQueryClient()
 const { data: me } = useGetMe()
 const isAdmin = computed(() => me.value?.is_admin ?? false)
 
-// ---- API helpers -----------------------------------------------------------
-
-async function apiGet<T>(url: string): Promise<T> {
-  const { data } = await axios.get(url)
-  return data
-}
-async function apiPost<T>(url: string, body: unknown): Promise<T> {
-  const { data } = await axios.post(url, body)
-  return data
-}
-async function apiPut<T>(url: string, body: unknown): Promise<T> {
-  const { data } = await axios.put(url, body)
-  return data
-}
-async function apiDelete(url: string): Promise<void> {
-  await axios.delete(url)
-}
-
-// ---- Types -----------------------------------------------------------------
-
-interface SmtpConnection {
-  id: string
-  name: string
-  provider: string
-  from_email: string
-  smtp_host: string
-  smtp_port: number
-  username: string
-  created_by: string
-  created_at: string
-  updated_at: string
-}
-
 const providerOptions = [
   { value: 'gsuite', label: 'Google Workspace (Gmail)' },
+  { value: 'smtp', label: 'Standard SMTP' },
   { value: 'sendgrid', label: 'SendGrid' },
 ]
 
@@ -60,7 +34,7 @@ const connectionsQueryKey = ['smtp-connections']
 
 const { data: connections, isLoading } = useQuery({
   queryKey: connectionsQueryKey,
-  queryFn: () => apiGet<SmtpConnection[]>('/api/v1/smtp-connections/'),
+  queryFn: () => listSmtpConnectionsApiV1SmtpConnectionsGet(),
 })
 
 function invalidateConnections() {
@@ -70,7 +44,7 @@ function invalidateConnections() {
 // ---- Modal state -----------------------------------------------------------
 
 const showModal = ref(false)
-const editingConnection = ref<SmtpConnection | null>(null)
+const editingConnection = ref<SmtpConnectionPublic | null>(null)
 const isSubmitting = ref(false)
 
 const form = ref({
@@ -103,7 +77,7 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(c: SmtpConnection) {
+function openEdit(c: SmtpConnectionPublic) {
   editingConnection.value = c
   form.value = {
     name: c.name,
@@ -120,7 +94,7 @@ function openEdit(c: SmtpConnection) {
 // ---- Mutations -------------------------------------------------------------
 
 const createMutation = useMutation({
-  mutationFn: (body: object) => apiPost<SmtpConnection>('/api/v1/smtp-connections/', body),
+  mutationFn: (data: SmtpConnectionCreate) => createSmtpConnectionApiV1SmtpConnectionsPost(data),
   onSuccess: () => { invalidateConnections(); toastStore.success('SMTP connection created') },
   onError: (err: unknown) => {
     const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -129,8 +103,8 @@ const createMutation = useMutation({
 })
 
 const updateMutation = useMutation({
-  mutationFn: ({ id, body }: { id: string; body: object }) =>
-    apiPut<SmtpConnection>(`/api/v1/smtp-connections/${id}`, body),
+  mutationFn: ({ id, body }: { id: string; body: SmtpConnectionUpdate }) =>
+    updateSmtpConnectionApiV1SmtpConnectionsConnectionIdPut(id, body),
   onSuccess: () => { invalidateConnections(); toastStore.success('SMTP connection updated') },
   onError: (err: unknown) => {
     const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -139,7 +113,7 @@ const updateMutation = useMutation({
 })
 
 const deleteMutation = useMutation({
-  mutationFn: (id: string) => apiDelete(`/api/v1/smtp-connections/${id}`),
+  mutationFn: (id: string) => deleteSmtpConnectionApiV1SmtpConnectionsConnectionIdDelete(id),
   onSuccess: () => { invalidateConnections(); toastStore.success('SMTP connection deleted') },
   onError: (err: unknown) => {
     const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -159,20 +133,28 @@ async function submitForm() {
   if (isSubmitting.value) return
   isSubmitting.value = true
   try {
-    const body: Record<string, unknown> = {
-      name: form.value.name.trim(),
-      provider: form.value.provider,
-      from_email: form.value.from_email.trim(),
-      smtp_host: form.value.smtp_host.trim(),
-      smtp_port: form.value.smtp_port,
-      username: form.value.username.trim(),
-    }
-    if (form.value.password.trim()) {
-      body.password = form.value.password.trim()
-    }
     if (editingConnection.value) {
+      const body: SmtpConnectionUpdate = {
+        name: form.value.name.trim(),
+        from_email: form.value.from_email.trim(),
+        smtp_host: form.value.smtp_host.trim(),
+        smtp_port: form.value.smtp_port,
+        username: form.value.username.trim(),
+      }
+      if (form.value.password.trim()) {
+        body.password = form.value.password.trim()
+      }
       await updateMutation.mutateAsync({ id: editingConnection.value.id, body })
     } else {
+      const body: SmtpConnectionCreate = {
+        name: form.value.name.trim(),
+        provider: form.value.provider,
+        from_email: form.value.from_email.trim(),
+        smtp_host: form.value.smtp_host.trim(),
+        smtp_port: form.value.smtp_port,
+        username: form.value.username.trim(),
+        password: form.value.password.trim(),
+      }
       await createMutation.mutateAsync(body)
     }
     showModal.value = false

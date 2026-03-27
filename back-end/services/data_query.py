@@ -18,7 +18,8 @@ from models.structure import Structure
 from repositories.structures import StructuresRepository
 from repositories.templates import TemplatesRepository
 
-PREVIEW_CACHE_TTL = 120  # 2 minutes
+PREVIEW_CACHE_TTL = 600  # 10 minutes
+MAX_QUERY_LIMIT = 10_000  # hard cap — prevents runaway result sets
 
 
 class DataQueryService:
@@ -33,6 +34,7 @@ class DataQueryService:
     async def execute_for_preview(
         self, template_id, limit: int = 50
     ) -> Dict[str, Any]:
+        limit = min(limit, MAX_QUERY_LIMIT)
         template = await self.templates_repo.get_by_id(template_id)
         if not template:
             raise ValueError("Template not found")
@@ -59,7 +61,11 @@ class DataQueryService:
         L.info(f"[DataQueryService] Executing: {query[:120]}...")
         df = await self.sql_connector.run_sql_statement_async(query)
 
-        if df is None or df.empty:
+        if df is None:
+            L.warning("[DataQueryService] SQL connector returned None — possible silent failure for query: %s", query[:120])
+            raise RuntimeError("Query returned no result from the SQL connector")
+
+        if df.empty:
             return [], []
 
         columns = list(df.columns)

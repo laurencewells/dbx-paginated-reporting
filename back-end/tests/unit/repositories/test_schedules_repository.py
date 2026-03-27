@@ -37,6 +37,7 @@ def _schedule_row(
     cron_expression: str = "0 9 * * 1",
     is_active: bool = True,
     created_by: str = "user@example.com",
+    send_list_ids=None,
 ):
     return (
         str(id or SCHID),
@@ -49,6 +50,7 @@ def _schedule_row(
         created_by,
         NOW,
         NOW,
+        send_list_ids,
     )
 
 
@@ -213,7 +215,7 @@ class TestCreate:
             is_active=False,
         )
         await repo.create(data, "creator@example.com")
-        params = connector.execute_query.call_args[0][1]
+        params = connector.execute_query.call_args_list[0][0][1]
         assert params["name"] == "New Schedule"
         assert params["project_id"] == str(PID)
         assert params["structure_id"] == str(SID)
@@ -257,7 +259,7 @@ class TestUpdate:
     async def test_update_name_only_includes_name_set(self):
         repo, connector = _make_repo(_make_result([_schedule_row()]))
         await repo.update(SCHID, ScheduleUpdate(name="New Name"))
-        sql = connector.execute_query.call_args[0][0]
+        sql = connector.execute_query.call_args_list[0][0][0]
         assert "name = :name" in sql
         assert "cron_expression = :cron_expression" not in sql
 
@@ -265,37 +267,37 @@ class TestUpdate:
     async def test_update_cron_expression(self):
         repo, connector = _make_repo(_make_result([_schedule_row()]))
         await repo.update(SCHID, ScheduleUpdate(cron_expression="*/5 * * * *"))
-        params = connector.execute_query.call_args[0][1]
+        params = connector.execute_query.call_args_list[0][0][1]
         assert params["cron_expression"] == "*/5 * * * *"
 
     @pytest.mark.asyncio
     async def test_update_is_active(self):
         repo, connector = _make_repo(_make_result([_schedule_row()]))
         await repo.update(SCHID, ScheduleUpdate(is_active=False))
-        sql = connector.execute_query.call_args[0][0]
+        sql = connector.execute_query.call_args_list[0][0][0]
         assert "is_active = :is_active" in sql
 
     @pytest.mark.asyncio
     async def test_expected_updated_at_adds_where_clause(self):
         repo, connector = _make_repo(_make_result([_schedule_row()]))
         await repo.update(SCHID, ScheduleUpdate(name="x", expected_updated_at=NOW))
-        sql = connector.execute_query.call_args[0][0]
+        sql = connector.execute_query.call_args_list[0][0][0]
         assert "updated_at = :expected_updated_at" in sql
-        params = connector.execute_query.call_args[0][1]
+        params = connector.execute_query.call_args_list[0][0][1]
         assert params["expected_updated_at"] == NOW
 
     @pytest.mark.asyncio
     async def test_no_expected_updated_at_omits_clause(self):
         repo, connector = _make_repo(_make_result([_schedule_row()]))
         await repo.update(SCHID, ScheduleUpdate(name="x"))
-        sql = connector.execute_query.call_args[0][0]
+        sql = connector.execute_query.call_args_list[0][0][0]
         assert "expected_updated_at" not in sql
 
     @pytest.mark.asyncio
     async def test_always_sets_updated_at_to_now(self):
         repo, connector = _make_repo(_make_result([_schedule_row()]))
         await repo.update(SCHID, ScheduleUpdate(name="x"))
-        sql = connector.execute_query.call_args[0][0]
+        sql = connector.execute_query.call_args_list[0][0][0]
         assert "updated_at = NOW()" in sql
 
 

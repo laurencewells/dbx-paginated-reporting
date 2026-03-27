@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from typing import List
 from uuid import UUID
@@ -12,11 +13,9 @@ from common.authorization import (
     check_project_access,
     check_project_not_locked,
 )
+from common.config import MAX_IMAGE_FILE_SIZE as MAX_FILE_SIZE, MAX_IMAGES_PER_PROJECT
 from common.logger import log as L
 from models.image import Image, ImageCreate, ImageUpdate
-
-MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
-MAX_IMAGES_PER_PROJECT = 20
 ALLOWED_MIME_TYPES = {
     "image/jpeg",
     "image/png",
@@ -136,7 +135,7 @@ async def upload_image(
                 detail=f"Project already has {count} images. Maximum is {MAX_IMAGES_PER_PROJECT}.",
             )
 
-        data_base64 = base64.b64encode(contents).decode("ascii")
+        data_base64 = (await asyncio.to_thread(base64.b64encode, contents)).decode("ascii")
 
         image_data = ImageCreate(
             project_id=project_id,

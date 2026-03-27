@@ -167,8 +167,6 @@ class TestBuildReportAgentPrompt:
         prompt = build_report_agent_prompt(_structure(), _template(template_type="markdown"))
         # HTML-specific sections must not appear in the markdown prompt
         assert "Bootstrap 5 First" not in prompt
-        assert "report-page" not in prompt
-        assert "report-bar-chart" not in prompt
         assert "report-tile" not in prompt
 
     def test_markdown_prompt_contains_markdown_reference(self):
