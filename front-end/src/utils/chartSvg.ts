@@ -1,5 +1,9 @@
 // SVG chart generation — geometry constants must match report_renderer.py exactly.
 
+function escapeXml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
+
 const VW = 560
 const VH = 300
 const COLORS = ['#3498db', '#2ecc71', '#9b59b6', '#f1c40f', '#e74c3c', '#1abc9c', '#e67e22']
@@ -40,7 +44,7 @@ export function svgBarChart(labels: string[], values: number[]): string {
         `text-anchor="middle" font-size="${fs}" fill="#555">${vs}</text>`
       )
     }
-    const ld = labels[i].length > 10 ? labels[i].slice(0, 10) + '\u2026' : labels[i]
+    const ld = escapeXml(labels[i].length > 10 ? labels[i].slice(0, 10) + '\u2026' : labels[i])
     const cx = (pL + i * gW + gW / 2).toFixed(1)
     parts.push(`<text x="${cx}" y="${pT + cH + 16}" text-anchor="middle" font-size="${fs}" fill="#555">${ld}</text>`)
   }
@@ -76,7 +80,7 @@ export function svgPieChart(labels: string[], values: number[]): string {
       `fill="${color}" stroke="#fff" stroke-width="2"/>`
     )
     const ly = ly0 + i * rh
-    const ld = labels[i].length > 14 ? labels[i].slice(0, 14) + '\u2026' : labels[i]
+    const ld = escapeXml(labels[i].length > 14 ? labels[i].slice(0, 14) + '\u2026' : labels[i])
     parts.push(`<rect x="${lx}" y="${ly - 10}" width="14" height="14" fill="${color}" rx="2"/>`)
     parts.push(`<text x="${lx + 18}" y="${ly}" font-size="11" fill="#555">${ld}</text>`)
   }

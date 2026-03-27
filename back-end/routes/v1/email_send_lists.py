@@ -30,10 +30,11 @@ async def _check_send_list_project_access(
     user_email: str,
     send_lists_repo: EmailSendListsRepository,
     projects_repo: ProjectsRepository,
-) -> None:
+) -> EmailSendList | None:
     send_list = await send_lists_repo.get_by_id(send_list_id)
     if send_list:
         await check_project_access_and_not_locked(send_list.project_id, user_email, projects_repo)
+    return send_list
 
 
 @router.get("/", response_model=List[EmailSendList])
@@ -55,9 +56,8 @@ async def get_send_list(
     repo: SendListsRepo,
     projects_repo: ProjectsRepo,
 ):
-    await _check_send_list_project_access(send_list_id, email, repo, projects_repo)
     async with db_op("get send list"):
-        send_list = await repo.get_by_id(send_list_id)
+        send_list = await _check_send_list_project_access(send_list_id, email, repo, projects_repo)
     if not send_list:
         raise HTTPException(status_code=404, detail="Send list not found")
     return send_list

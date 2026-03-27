@@ -155,7 +155,7 @@ This template type uses **Mustache for data binding** and **extended Markdown (G
 Mustache is processed first, then the result is converted to HTML — so all standard Mustache syntax works inside Markdown.
 
 **Important constraints:**
-- No HTML, no Bootstrap classes, no CSS — Markdown only.
+- No Bootstrap classes, no CSS. Prefer Markdown formatting; inline HTML (e.g. page-break `<div>` tags) is allowed where Markdown has no equivalent.
 - No charts — charts are not supported in Markdown templates.
 - Use Markdown tables, headings, lists, code blocks, and blockquotes for all formatting.
 {_MUSTACHE_REFERENCE}

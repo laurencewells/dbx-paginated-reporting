@@ -39,6 +39,7 @@ class TestExecutionStatus:
             ExecutionStatus.running,
             ExecutionStatus.success,
             ExecutionStatus.failed,
+            ExecutionStatus.interrupted,
         }
 
     def test_values_are_strings(self):
@@ -46,6 +47,7 @@ class TestExecutionStatus:
         assert ExecutionStatus.failed == "failed"
         assert ExecutionStatus.running == "running"
         assert ExecutionStatus.pending == "pending"
+        assert ExecutionStatus.interrupted == "interrupted"
 
     def test_is_str_subclass(self):
         assert isinstance(ExecutionStatus.success, str)

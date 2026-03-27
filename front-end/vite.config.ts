@@ -23,7 +23,7 @@ export default defineConfig({
             '@codemirror/view',
             'codemirror',
           ],
-mustache: ['mustache'],
+          mustache: ['mustache'],
           dompurify: ['dompurify'],
         },
       },

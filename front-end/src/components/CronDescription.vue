@@ -38,7 +38,7 @@ function describeCron(cron: string): string {
   }
 
   // Every N weeks: M H * * 0/N or */N
-  const everyWeek = dow.match(/^(?:0\/)?(\d+)$/)
+  const everyWeek = dow.match(/^(?:0\/|\*\/)(\d+)$/)
   if (everyWeek && dom === '*' && month === '*') {
     const n = parseInt(everyWeek[1])
     const timeStr = fmtTime(hour, minute)
