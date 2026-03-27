@@ -218,7 +218,7 @@ async function exportToPdf() {
                 style="width: 72px;"
                 v-model.number="previewLimit"
                 min="1"
-                max="10000"
+                max="1000"
                 @change="loadPreview"
               />
             </template>

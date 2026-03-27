@@ -397,8 +397,8 @@ _IMAGE_SRC_RE = re.compile(
 
 async def inline_images(html: str) -> str:
     """
-    Replace img:UUID src attributes with base64 data URIs fetched directly
-    from the database.
+    Replace img:UUID src attributes (e.g. src="img:abc123...") with base64
+    data URIs fetched directly from the database.
 
     Safe to call for both HTML downloads and WeasyPrint — images that cannot
     be resolved are left as-is rather than raising.

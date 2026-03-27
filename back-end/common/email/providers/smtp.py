@@ -15,7 +15,11 @@ from typing import List
 from common.email.base import EmailProvider
 from common.logger import log as L
 
-_SMTP_TIMEOUT_SECONDS = int(os.getenv("SMTP_TIMEOUT_SECONDS", "30"))
+try:
+    _SMTP_TIMEOUT_SECONDS = int(os.getenv("SMTP_TIMEOUT_SECONDS", "30"))
+except ValueError:
+    L.warning("Invalid SMTP_TIMEOUT_SECONDS value in environment; using default of 30 seconds.")
+    _SMTP_TIMEOUT_SECONDS = 30
 
 
 class SmtpEmailProvider(EmailProvider):

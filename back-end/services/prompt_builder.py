@@ -155,14 +155,12 @@ Wrap the repeating section in a div with `data-break-after="N"`. The renderer in
   {{{{#rows}}}}<div class="row-block">...</div>{{{{/rows}}}}
 </div>
 ```
-Or for table rows:
+Or for table rows, put `data-break-after` on `<tbody>` itself:
 ```html
 <table class="report-table">
   <thead><tr><th>Name</th><th>Value</th></tr></thead>
-  <tbody>
-    <div data-break-after="25">
-      {{{{#rows}}}}<tr><td>{{{{name}}}}</td><td>{{{{value}}}}</td></tr>{{{{/rows}}}}
-    </div>
+  <tbody data-break-after="25">
+    {{{{#rows}}}}<tr><td>{{{{name}}}}</td><td>{{{{value}}}}</td></tr>{{{{/rows}}}}
   </tbody>
 </table>
 ```
