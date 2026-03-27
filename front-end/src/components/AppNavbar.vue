@@ -15,7 +15,7 @@ const navItems = [
   { path: '/projects', label: 'Projects', icon: 'bi-folder2-open' },
   { path: '/data-structures', label: 'Data Structures', icon: 'bi-diagram-3' },
   { path: '/template-editor', label: 'Template Editor', icon: 'bi-code-square' },
-{ path: '/images', label: 'Images', icon: 'bi-images' },
+  { path: '/images', label: 'Images', icon: 'bi-images' },
   { path: '/schedules', label: 'Schedules', icon: 'bi-clock-history' },
   { path: '/guide', label: 'Guide', icon: 'bi-book' },
 ]

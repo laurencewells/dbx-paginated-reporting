@@ -11,9 +11,12 @@ const COLORS = ['#3498db', '#2ecc71', '#9b59b6', '#f1c40f', '#e74c3c', '#1abc9c'
 export function parseChartData(el: Element): { labels: string[]; values: number[] } {
   const l = (el.getAttribute('data-labels') ?? '').replace(/^\[|\]$/g, '')
   const v = (el.getAttribute('data-values') ?? '').replace(/^\[|\]$/g, '')
-  const labels = l.split(',').map(s => s.trim()).filter(Boolean)
-  const values = v.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n))
-  return { labels, values }
+  const rawLabels = l.split(',').map(s => s.trim())
+  const rawValues = v.split(',').map(s => parseFloat(s.trim()))
+  const pairs = rawLabels
+    .map((label, i) => ({ label, value: rawValues[i] }))
+    .filter(p => p.label && !isNaN(p.value))
+  return { labels: pairs.map(p => p.label), values: pairs.map(p => p.value) }
 }
 
 export function svgBarChart(labels: string[], values: number[]): string {

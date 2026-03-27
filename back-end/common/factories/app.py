@@ -9,7 +9,6 @@ after environment variables have been loaded.
 from common.logger import log as L
 from contextlib import asynccontextmanager
 from typing import Optional
-from apscheduler.jobstores.base import JobLookupError
 from common.factories.scheduler import scheduler_factory
 from common.factories.lakebase import LakebaseFactory
 from common.factories.cache import app_cache

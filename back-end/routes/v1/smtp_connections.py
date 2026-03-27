@@ -45,14 +45,14 @@ def _delete_secret(scope: str, key: str) -> None:
 
 
 @router.get("/", response_model=List[SmtpConnectionPublic])
-async def list_smtp_connections(repo: SmtpRepo):
+async def list_smtp_connections(repo: SmtpRepo, email: CurrentUser):
     """List all SMTP connections (readable by any authenticated user)."""
     async with db_op("list SMTP connections"):
         return await repo.get_all()
 
 
 @router.get("/{connection_id}", response_model=SmtpConnectionPublic)
-async def get_smtp_connection(connection_id: UUID, repo: SmtpRepo):
+async def get_smtp_connection(connection_id: UUID, repo: SmtpRepo, email: CurrentUser):
     async with db_op("get SMTP connection"):
         conn = await repo.get_by_id(connection_id)
     if not conn:
