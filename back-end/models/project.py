@@ -22,13 +22,13 @@ class Project(BaseModel):
 class ProjectCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    name: str
+    name: str = Field(min_length=1, max_length=200)
 
 
 class ProjectUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=200)
     is_locked: Optional[bool] = None
     is_global: Optional[bool] = None
 

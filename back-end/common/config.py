@@ -7,6 +7,11 @@ from common.logger import log as L
 from typing import Dict, List, Any, Optional
 
 
+# Image upload limits
+MAX_IMAGE_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
+MAX_IMAGES_PER_PROJECT = 20
+
+
 def is_development() -> bool:
     """Check if running in development environment."""
     return os.environ.get("ENV") == "DEV"

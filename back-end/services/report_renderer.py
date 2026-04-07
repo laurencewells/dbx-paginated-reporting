@@ -7,12 +7,13 @@ No user bearer token is available in scheduled context — the app's service
 principal credentials (from environment) are used by SQLConnector by default.
 """
 
-import math
 import re
 from uuid import UUID
 
+import altair as alt
 import chevron
 import markdown2
+import vl_convert as vlc
 
 from common.connectors.sql import SQLConnector
 from common.logger import log as L
@@ -94,142 +95,227 @@ _REPORT_STYLES = """
   .report-global-footer { border-top: 1px solid #dee2e6; padding-top: 0.75rem; margin-top: 1.5rem; font-size: 0.8rem; color: #6c757d; }
 """
 
-# Inline SVG chart renderer — mirrors chartSvg.ts in the frontend.
-# Geometry constants must match _svg_bar_chart / _svg_pie_chart below exactly.
-# Only included in HTML output; omitted for PDF (charts are pre-rendered as SVG).
-_CHART_SCRIPT = """
-<script>
-(function(){
-  var VW=560,VH=300;
-  var COLORS=['#3498db','#2ecc71','#9b59b6','#f1c40f','#e74c3c','#1abc9c','#e67e22'];
-  function parse(el){
-    var l=(el.getAttribute('data-labels')||'').replace(/^\\[|\\]$/g,'');
-    var v=(el.getAttribute('data-values')||'').replace(/^\\[|\\]$/g,'');
-    return{labels:l.split(',').map(function(s){return s.trim()}).filter(Boolean),values:v.split(',').map(function(s){return parseFloat(s.trim())}).filter(function(n){return !isNaN(n)})};
-  }
-  function bar(labels,values){
-    var n=labels.length,maxV=Math.max.apply(null,values.concat([0]))||1;
-    var pT=30,pB=50,pL=50,pR=20,cW=VW-pL-pR,cH=VH-pT-pB,gW=cW/n,bW=gW*0.6,many=n>10,fs=many?9:11;
-    var s='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+VW+' '+VH+'" style="width:100%;max-height:'+VH+'px;display:block;">';
-    s+='<line x1="'+pL+'" y1="'+pT+'" x2="'+pL+'" y2="'+(pT+cH)+'" stroke="#ccc"/>';
-    s+='<line x1="'+pL+'" y1="'+(pT+cH)+'" x2="'+(pL+cW)+'" y2="'+(pT+cH)+'" stroke="#ccc"/>';
-    for(var i=0;i<n;i++){
-      var c=COLORS[i%COLORS.length],bH=(values[i]/maxV)*cH,x=(pL+i*gW+(gW-bW)/2).toFixed(1),y=(pT+cH-bH).toFixed(1);
-      s+='<rect x="'+x+'" y="'+y+'" width="'+bW.toFixed(1)+'" height="'+bH.toFixed(1)+'" fill="'+c+'" rx="2"/>';
-      if(!many){var vs=Number.isInteger(values[i])?values[i]:values[i].toFixed(1);s+='<text x="'+(parseFloat(x)+bW/2).toFixed(1)+'" y="'+(parseFloat(y)-4).toFixed(1)+'" text-anchor="middle" font-size="'+fs+'" fill="#555">'+vs+'</text>';}
-      var ld=labels[i].length>10?labels[i].slice(0,10)+'\u2026':labels[i],cx=(pL+i*gW+gW/2).toFixed(1);
-      s+='<text x="'+cx+'" y="'+(pT+cH+16)+'" text-anchor="middle" font-size="'+fs+'" fill="#555">'+ld+'</text>';
-    }
-    return s+'</svg>';
-  }
-  function pie(labels,values){
-    var n=labels.length,total=values.reduce(function(a,b){return a+b},0)||1;
-    var cx=200,cy=150,r=120,lx=340,ly0=60,rh=24,vh=Math.max(VH,60+n*rh+20);
-    var s='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 '+vh+'" style="width:100%;max-height:'+vh+'px;display:block;">';
-    var a=-Math.PI/2;
-    for(var i=0;i<n;i++){
-      var c=COLORS[i%COLORS.length],sw=(values[i]/total)*2*Math.PI;
-      var x1=(cx+r*Math.cos(a)).toFixed(3),y1=(cy+r*Math.sin(a)).toFixed(3);
-      a+=sw;
-      var x2=(cx+r*Math.cos(a)).toFixed(3),y2=(cy+r*Math.sin(a)).toFixed(3);
-      var lg=sw>Math.PI?1:0;
-      s+='<path d="M'+cx+','+cy+' L'+x1+','+y1+' A'+r+','+r+' 0 '+lg+',1 '+x2+','+y2+' Z" fill="'+c+'" stroke="#fff" stroke-width="2"/>';
-      var ly=ly0+i*rh,ld=labels[i].length>14?labels[i].slice(0,14)+'\u2026':labels[i];
-      s+='<rect x="'+lx+'" y="'+(ly-10)+'" width="14" height="14" fill="'+c+'" rx="2"/>';
-      s+='<text x="'+(lx+18)+'" y="'+ly+'" font-size="11" fill="#555">'+ld+'</text>';
-    }
-    return s+'</svg>';
-  }
-  function renderAll(sel,fn){document.querySelectorAll(sel).forEach(function(el){var d=parse(el);if(!d.labels.length)return;el.innerHTML=fn(d.labels,d.values);});}
-  document.addEventListener('DOMContentLoaded',function(){renderAll('.report-bar-chart',bar);renderAll('.report-pie-chart',pie);});
-})();
-</script>
-"""
+# ---------------------------------------------------------------------------
+# Pagination layout magic — post-processing for header/footer and break-after
+# ---------------------------------------------------------------------------
 
-# ---- SVG geometry constants (must match _CHART_SCRIPT and chartSvg.ts exactly) ----
-_SVG_COLORS = ['#3498db', '#2ecc71', '#9b59b6', '#f1c40f', '#e74c3c', '#1abc9c', '#e67e22']
-_SVG_VW = 560
-_SVG_VH = 300
+_DIV_OPEN_RE = re.compile(r'<div\b')
+_DIV_CLOSE_RE = re.compile(r'</div>')
+# Matches a .report-page opening tag — report-page as a standalone class (not a prefix like report-page-header)
+_REPORT_PAGE_OPEN_RE = re.compile(
+    r'<div\b[^>]*\bclass="(?:[^"]*\s|)report-page(?:\s[^"]*)?"[^>]*>'
+)
+_BREAK_AFTER_OPEN_RE = re.compile(r'<div\b([^>]*)\bdata-break-after="(\d+)"([^>]*)>')
+_VOID_TAGS = frozenset(
+    'area base br col embed hr img input link meta param source track wbr'.split()
+)
+_CHILD_TAG_RE = re.compile(r'<(/?)(\w+)([^>]*)>', re.DOTALL)
 
 
-def _svg_bar_chart(labels: list[str], values: list[float]) -> str:
-    """Return an inline SVG bar chart string."""
-    n = len(labels)
-    if n == 0:
-        return ''
-    max_val = max(values) if max(values) > 0 else 1
-    p_top, p_bot, p_left, p_right = 30, 50, 50, 20
-    chart_w = _SVG_VW - p_left - p_right
-    chart_h = _SVG_VH - p_top - p_bot
-    group_w = chart_w / n
-    bar_w = group_w * 0.6
-    many = n > 10
-    fs = 9 if many else 11
+def _find_div_close(html: str, content_start: int) -> tuple[int | None, int | None]:
+    """
+    Find the </div> that closes a <div> whose content starts at content_start.
+    Returns (inner_end, outer_end) — positions before/after the closing tag.
+    Returns (None, None) on malformed HTML.
+    """
+    depth = 1
+    pos = content_start
+    while depth > 0:
+        open_m = _DIV_OPEN_RE.search(html, pos)
+        close_m = _DIV_CLOSE_RE.search(html, pos)
+        if not close_m:
+            return None, None
+        if open_m and open_m.start() < close_m.start():
+            depth += 1
+            pos = open_m.end()
+        else:
+            depth -= 1
+            if depth == 0:
+                return close_m.start(), close_m.end()
+            pos = close_m.end()
+    return None, None
 
-    parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_SVG_VW} {_SVG_VH}"'
-        f' style="width:100%;max-height:{_SVG_VH}px;display:block;">',
-        f'<line x1="{p_left}" y1="{p_top}" x2="{p_left}" y2="{p_top + chart_h}" stroke="#ccc"/>',
-        f'<line x1="{p_left}" y1="{p_top + chart_h}" x2="{p_left + chart_w}" y2="{p_top + chart_h}" stroke="#ccc"/>',
-    ]
-    for i, (label, value) in enumerate(zip(labels, values)):
-        color = _SVG_COLORS[i % len(_SVG_COLORS)]
-        bar_h = (value / max_val) * chart_h
-        x = p_left + i * group_w + (group_w - bar_w) / 2
-        y = p_top + chart_h - bar_h
-        parts.append(
-            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bar_h:.1f}" fill="{color}" rx="2"/>'
+
+def _extract_class_div(html: str, cls: str) -> tuple[str | None, str]:
+    """
+    Find the first <div> whose class attribute contains `cls` as a standalone class,
+    extract its inner HTML, and return (inner_html, html_without_that_div).
+    Returns (None, html) if not found.
+    """
+    m = re.search(
+        rf'<div\b[^>]*\bclass="(?:[^"]*\s|){re.escape(cls)}(?:\s[^"]*)?"[^>]*>',
+        html,
+    )
+    if not m:
+        return None, html
+    inner_end, outer_end = _find_div_close(html, m.end())
+    if inner_end is None:
+        return None, html
+    inner = html[m.end():inner_end]
+    cleaned = html[:m.start()] + html[outer_end:]
+    return inner, cleaned
+
+
+def _inject_breaks_in_content(content: str, n: int) -> str:
+    """
+    Scan top-level child elements in `content` and insert a .page-break div
+    after every n-th element. The final partial group never gets a trailing break.
+    """
+    BREAK = '<div class="page-break"></div>'
+    parts: list[tuple[str, bool]] = []  # (text, is_break_marker)
+    pos = 0
+    depth = 0
+    count = 0
+
+    for m in _CHILD_TAG_RE.finditer(content):
+        parts.append((content[pos:m.start()], False))
+        is_close = bool(m.group(1))
+        tag = m.group(2).lower()
+        self_closing = m.group(3).rstrip().endswith('/') or tag in _VOID_TAGS
+        parts.append((m.group(0), False))
+        pos = m.end()
+
+        if is_close:
+            if depth > 0:
+                depth -= 1
+            if depth == 0:
+                count += 1
+                if count % n == 0:
+                    parts.append((BREAK, True))
+        elif not self_closing:
+            depth += 1
+
+    parts.append((content[pos:], False))
+
+    # Drop trailing break marker if nothing meaningful follows it
+    last_break = next((i for i in reversed(range(len(parts))) if parts[i][1]), -1)
+    if last_break != -1:
+        after_text = ''.join(t for t, _ in parts[last_break + 1:]).strip()
+        if not after_text:
+            parts = parts[:last_break] + parts[last_break + 1:]
+
+    return ''.join(t for t, _ in parts)
+
+
+def _inject_global_header_footer(html: str) -> str:
+    """
+    Find .report-global-header and .report-global-footer divs, remove them from
+    their original positions, and inject copies at the top/bottom of every .report-page.
+    """
+    header_inner, html = _extract_class_div(html, 'report-global-header')
+    footer_inner, html = _extract_class_div(html, 'report-global-footer')
+    if not header_inner and not footer_inner:
+        return html
+
+    header_html = f'<div class="report-global-header">{header_inner}</div>' if header_inner else ''
+    footer_html = f'<div class="report-global-footer">{footer_inner}</div>' if footer_inner else ''
+
+    out: list[str] = []
+    pos = 0
+    for m in _REPORT_PAGE_OPEN_RE.finditer(html):
+        inner_end, outer_end = _find_div_close(html, m.end())
+        if inner_end is None:
+            out.append(html[pos:m.end()])
+            pos = m.end()
+            continue
+        out.append(html[pos:m.start()])
+        out.append(m.group(0))
+        out.append(header_html)
+        out.append(html[m.end():inner_end])
+        out.append(footer_html)
+        out.append('</div>')
+        pos = outer_end
+
+    out.append(html[pos:])
+    return ''.join(out)
+
+
+def _apply_break_after(html: str) -> str:
+    """
+    Find <div data-break-after="N"> elements and inject .page-break divs
+    after every N top-level child elements within each one.
+    """
+    out: list[str] = []
+    pos = 0
+    for m in _BREAK_AFTER_OPEN_RE.finditer(html):
+        n = int(m.group(2))
+        if n <= 0:
+            continue
+        content_start = m.end()
+        inner_end, outer_end = _find_div_close(html, content_start)
+        if inner_end is None:
+            continue
+        inner = html[content_start:inner_end]
+        other_attrs = (m.group(1) + m.group(3)).strip()
+        open_tag = f'<div {other_attrs}>' if other_attrs else '<div>'
+        out.append(html[pos:m.start()])
+        out.append(open_tag)
+        out.append(_inject_breaks_in_content(inner, n))
+        out.append('</div>')
+        pos = outer_end
+
+    out.append(html[pos:])
+    return ''.join(out)
+
+
+def process_layout_magic(html: str) -> str:
+    """
+    Post-process rendered Mustache HTML to apply pagination magic commands:
+    - Clone .report-global-header / .report-global-footer into every .report-page
+    - Inject .page-break divs at data-break-after="N" intervals
+    """
+    html = _inject_global_header_footer(html)
+    html = _apply_break_after(html)
+    return html
+
+
+def _parse_chart_opts(all_attrs: str) -> dict:
+    """Extract optional Vega-Lite data attributes from a chart div's attribute string."""
+    opts: dict = {}
+    for key in ('title', 'color-scheme', 'width', 'height', 'x-title', 'y-title', 'sort', 'inner-radius'):
+        m = re.search(rf'\bdata-{re.escape(key)}=["\']([^"\']*)["\']', all_attrs)
+        if m:
+            opts[key] = m.group(1).strip()
+    return opts
+
+
+def _build_bar_spec(labels: list[str], values: list[float], opts: dict) -> dict:
+    data = [{'label': l, 'value': v} for l, v in zip(labels, values)]
+    sort = opts.get('sort') or None
+    chart = (
+        alt.Chart(alt.Data(values=data))
+        .mark_bar(cornerRadiusTopLeft=2, cornerRadiusTopRight=2)
+        .encode(
+            x=alt.X('label:N', sort=sort, axis=alt.Axis(labelAngle=-30, title=opts.get('x-title') or None)),
+            y=alt.Y('value:Q', axis=alt.Axis(title=opts.get('y-title') or None)),
+            color=alt.Color('label:N', scale=alt.Scale(scheme=opts.get('color-scheme') or 'tableau10'), legend=None),
         )
-        if not many:
-            val_str = str(int(value)) if value == int(value) else f'{value:.1f}'
-            parts.append(
-                f'<text x="{x + bar_w / 2:.1f}" y="{y - 4:.1f}" text-anchor="middle"'
-                f' font-size="{fs}" fill="#555">{val_str}</text>'
-            )
-        label_disp = label[:10] + '\u2026' if len(label) > 10 else label
-        cx = p_left + i * group_w + group_w / 2
-        parts.append(
-            f'<text x="{cx:.1f}" y="{p_top + chart_h + 16}" text-anchor="middle"'
-            f' font-size="{fs}" fill="#555">{label_disp}</text>'
+        .properties(
+            width=int(opts['width']) if opts.get('width') else 500,
+            height=int(opts['height']) if opts.get('height') else 250,
+            title=opts.get('title') or '',
         )
-    parts.append('</svg>')
-    return ''.join(parts)
+    )
+    return chart.to_dict()
 
 
-def _svg_pie_chart(labels: list[str], values: list[float]) -> str:
-    """Return an inline SVG pie chart with legend."""
-    n = len(labels)
-    if n == 0:
-        return ''
-    total = sum(values) or 1
-    cx, cy, r = 200, 150, 120
-    lx, ly0, row_h = 340, 60, 24
-    vh = max(_SVG_VH, 60 + n * row_h + 20)
-
-    parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {_SVG_VW} {vh}"'
-        f' style="width:100%;max-height:{vh}px;display:block;">',
-    ]
-    angle = -math.pi / 2
-    for i, (label, value) in enumerate(zip(labels, values)):
-        color = _SVG_COLORS[i % len(_SVG_COLORS)]
-        sweep = (value / total) * 2 * math.pi
-        x1 = cx + r * math.cos(angle)
-        y1 = cy + r * math.sin(angle)
-        angle += sweep
-        x2 = cx + r * math.cos(angle)
-        y2 = cy + r * math.sin(angle)
-        large = 1 if sweep > math.pi else 0
-        parts.append(
-            f'<path d="M{cx},{cy} L{x1:.3f},{y1:.3f} A{r},{r} 0 {large},1 {x2:.3f},{y2:.3f} Z"'
-            f' fill="{color}" stroke="#fff" stroke-width="2"/>'
+def _build_pie_spec(labels: list[str], values: list[float], opts: dict) -> dict:
+    data = [{'label': l, 'value': v} for l, v in zip(labels, values)]
+    inner_radius = int(opts['inner-radius']) if opts.get('inner-radius') else 0
+    chart = (
+        alt.Chart(alt.Data(values=data))
+        .mark_arc(innerRadius=inner_radius)
+        .encode(
+            theta=alt.Theta('value:Q'),
+            color=alt.Color('label:N', scale=alt.Scale(scheme=opts.get('color-scheme') or 'tableau10')),
         )
-        ly = ly0 + i * row_h
-        label_disp = label[:14] + '\u2026' if len(label) > 14 else label
-        parts.append(f'<rect x="{lx}" y="{ly - 10}" width="14" height="14" fill="{color}" rx="2"/>')
-        parts.append(f'<text x="{lx + 18}" y="{ly}" font-size="11" fill="#555">{label_disp}</text>')
-    parts.append('</svg>')
-    return ''.join(parts)
+        .properties(
+            width=int(opts['width']) if opts.get('width') else 300,
+            height=int(opts['height']) if opts.get('height') else 300,
+            title=opts.get('title') or '',
+        )
+    )
+    return chart.to_dict()
 
 
 _MARKDOWN_STYLES = """
@@ -284,7 +370,7 @@ _DATA_VALUES_RE = re.compile(r'\bdata-values="([^"]*)"')
 
 
 def render_charts_as_svg(html: str) -> str:
-    """Replace .report-bar-chart and .report-pie-chart divs with inline SVG markup."""
+    """Replace .report-bar-chart and .report-pie-chart divs with inline Vega-Lite SVG."""
     def _replace(m: re.Match) -> str:
         before, cls, chart_type, after = m.group(1), m.group(2), m.group(3), m.group(4)
         all_attrs = before + f' class="{cls}"' + after
@@ -301,22 +387,28 @@ def render_charts_as_svg(html: str) -> str:
             values = [float(v.strip()) for v in raw_values.split(',') if v.strip()]
         except ValueError:
             return m.group(0)
-        svg = _svg_bar_chart(labels, values) if chart_type == 'bar' else _svg_pie_chart(labels, values)
+        opts = _parse_chart_opts(all_attrs)
+        try:
+            spec = _build_bar_spec(labels, values, opts) if chart_type == 'bar' else _build_pie_spec(labels, values, opts)
+            svg = vlc.vegalite_to_svg(spec)
+        except Exception as exc:
+            L.warning(f"[ReportRenderer] Chart render failed ({chart_type}): {exc}")
+            return m.group(0)
         return f'<div{before} class="{cls}"{after}>{svg}</div>'
 
     return _CHART_DIV_RE.sub(_replace, html)
 
 
 _IMAGE_SRC_RE = re.compile(
-    r'(src=["\'])(/api/v1/images/([0-9a-f-]{36})/data)(["\'])',
+    r'(src=["\'])(img:([0-9a-f-]{36}))(["\'])',
     re.IGNORECASE,
 )
 
 
 async def inline_images(html: str) -> str:
     """
-    Replace /api/v1/images/{uuid}/data src attributes with base64 data URIs
-    fetched directly from the database.
+    Replace img:UUID src attributes (e.g. src="img:abc123...") with base64
+    data URIs fetched directly from the database.
 
     Safe to call for both HTML downloads and WeasyPrint — images that cannot
     be resolved are left as-is rather than raising.
@@ -345,15 +437,14 @@ async def inline_images(html: str) -> str:
     return _IMAGE_SRC_RE.sub(_replace, html)
 
 
-def build_html_document(body: str, title: str, include_charts: bool = True, is_markdown: bool = False) -> str:
+def build_html_document(body: str, title: str, is_markdown: bool = False) -> str:
     """
     Wrap a rendered report body in a complete HTML document with Bootstrap
     and report styles — equivalent to buildDocument() in PreviewExportModal.vue.
 
-    Pass include_charts=False for WeasyPrint (no JS engine).
     Pass is_markdown=True for markdown templates to include markdown typography styles.
+    Charts are pre-rendered as inline SVG before this is called — no JS required.
     """
-    chart_script = _CHART_SCRIPT if (include_charts and not is_markdown) else ""
     extra_styles = _MARKDOWN_STYLES if is_markdown else ""
     return (
         f'<!DOCTYPE html><html><head>\n'
@@ -361,7 +452,7 @@ def build_html_document(body: str, title: str, include_charts: bool = True, is_m
         f'<title>{title}</title>\n'
         f'<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">\n'
         f'<style>{_REPORT_STYLES}{extra_styles}</style>\n'
-        f'</head><body>{body}{chart_script}</body></html>'
+        f'</head><body>{body}</body></html>'
     )
 
 
@@ -404,6 +495,8 @@ async def render_report(template_id: UUID) -> tuple[str, Template]:
     if template.template_type == "markdown":
         rendered = _render_markdown(rendered)
 
+    rendered = process_layout_magic(rendered)
+
     return rendered, template
 
 
@@ -419,10 +512,9 @@ async def render_report_pdf(template_id: UUID) -> tuple[bytes, Template]:
 
     body, template = await render_report(template_id)
     body = await inline_images(body)
+    body = render_charts_as_svg(body)
     is_markdown = template.template_type == "markdown"
-    if not is_markdown:
-        body = render_charts_as_svg(body)
-    full_html = build_html_document(body, template.name, include_charts=False, is_markdown=is_markdown)
+    full_html = build_html_document(body, template.name, is_markdown=is_markdown)
     try:
         pdf_bytes = weasyprint.HTML(string=full_html).write_pdf()
     except Exception as e:

@@ -16,10 +16,11 @@ import {
   useCreateShareApiV1ProjectsProjectIdSharesPost,
   useDeleteShareApiV1ProjectsProjectIdSharesShareIdDelete,
   getListSharesApiV1ProjectsProjectIdSharesGetQueryKey,
+  listProjectReportsApiV1ProjectsProjectIdReportsGet,
 } from '@/api/generated/projects/projects'
 import { useGetMe } from '@/api/generated/default/default'
 import { useQuery } from '@tanstack/vue-query'
-import axios from 'axios'
+import { listSchedulesApiV1SchedulesGet } from '@/api/generated/schedules/schedules'
 import type { Project } from '@/api/generated'
 import CronDescription from '@/components/CronDescription.vue'
 
@@ -228,31 +229,17 @@ async function removeShare(shareId: string) {
 
 // -- Reports query ------------------------------------------------------------
 const reportsProjectId = computed(() => activeProject.value?.id ?? '')
-const { data: reports, isLoading: reportsLoading } = useQuery({
+const { data: reportsRaw, isLoading: reportsLoading } = useQuery({
   queryKey: computed(() => ['project-reports', reportsProjectId.value]),
-  queryFn: async () => {
-    const { data } = await axios.get<ProjectReport[]>(`/api/v1/projects/${reportsProjectId.value}/reports`)
-    return data
-  },
+  queryFn: () => listProjectReportsApiV1ProjectsProjectIdReportsGet(reportsProjectId.value),
   enabled: computed(() => !!activeProject.value),
 })
+const reports = computed(() => reportsRaw.value as unknown as ProjectReport[] | undefined)
 
 // -- Schedules query ----------------------------------------------------------
-interface Schedule {
-  id: string
-  name: string
-  cron_expression: string
-  is_active: boolean
-}
-
 const { data: schedules, isLoading: schedulesLoading } = useQuery({
   queryKey: computed(() => ['schedules', reportsProjectId.value]),
-  queryFn: async () => {
-    const { data } = await axios.get<Schedule[]>('/api/v1/schedules/', {
-      params: { project_id: reportsProjectId.value },
-    })
-    return data
-  },
+  queryFn: () => listSchedulesApiV1SchedulesGet({ project_id: reportsProjectId.value }),
   enabled: computed(() => !!activeProject.value),
 })
 

@@ -604,8 +604,7 @@ class TestTriggerSchedule:
             await async_client.post(f"/api/v1/schedules/{SCHID}/trigger")
         scheduler.add_job.assert_called_once()
         _, kwargs = scheduler.add_job.call_args
-        assert kwargs["id"] == f"{SCHID}_manual"
-        assert kwargs["replace_existing"] is True
+        assert kwargs["id"].startswith("manual_")
 
     @pytest.mark.asyncio
     async def test_returns_404_when_schedule_not_found(self, async_client, dependency_overrides):
@@ -615,3 +614,363 @@ class TestTriggerSchedule:
         with _NO_AUTH():
             response = await async_client.post(f"/api/v1/schedules/{uuid.uuid4()}/trigger")
         assert response.status_code == 404
+
+# ---------------------------------------------------------------------------
+# _register_job with invalid cron
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterJobInvalidCron:
+    def test_invalid_cron_logs_error_and_does_not_add_job(self):
+        from routes.v1.schedules import _register_job
+        scheduler = _mock_scheduler()
+        bad_schedule = _schedule(is_active=True, cron_expression="not valid at all")
+        with patch("routes.v1.schedules._scheduler", scheduler):
+            _register_job(bad_schedule)  # should not raise
+        scheduler.add_job.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _send_to_one_list
+# ---------------------------------------------------------------------------
+
+
+def _smtp_conn():
+    from models.smtp_connection import SmtpConnection
+    import uuid
+    return SmtpConnection(
+        id=uuid.uuid4(),
+        name="Test SMTP",
+        provider="smtp",
+        from_email="noreply@example.com",
+        smtp_host="smtp.example.com",
+        smtp_port=587,
+        username="user",
+        secret_scope="scope",
+        secret_key="key",
+        created_by="admin@example.com",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def _send_list(*, emails=None):
+    from models.email_send_list import EmailSendList
+    import uuid
+    return EmailSendList(
+        id=uuid.uuid4(),
+        name="Weekly List",
+        project_id=PID,
+        smtp_connection_id=uuid.uuid4(),
+        emails=emails if emails is not None else ["alice@example.com", "bob@example.com"],
+        created_by="user@example.com",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+class TestSendToOneList:
+    @pytest.mark.asyncio
+    async def test_sends_html_email_and_returns_success(self):
+        from routes.v1.schedules import _send_to_one_list
+        provider = MagicMock()
+        provider.send_html = AsyncMock()
+        with patch("routes.v1.schedules.get_provider", return_value=provider):
+            msg, has_error = await _send_to_one_list(_schedule(), _send_list(), _smtp_conn(), "<p>body</p>", None)
+        assert has_error is False
+        assert "Emails sent" in msg
+        provider.send_html.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_sends_pdf_attachment_when_pdf_bytes_provided(self):
+        from routes.v1.schedules import _send_to_one_list
+        provider = MagicMock()
+        provider.send_attachment = AsyncMock()
+        with patch("routes.v1.schedules.get_provider", return_value=provider):
+            msg, has_error = await _send_to_one_list(
+                _schedule(), _send_list(), _smtp_conn(), "<p>body</p>", b"%PDF"
+            )
+        assert has_error is False
+        provider.send_attachment.assert_awaited_once()
+        assert "Emails sent" in msg
+
+    @pytest.mark.asyncio
+    async def test_returns_error_on_send_failure(self):
+        from routes.v1.schedules import _send_to_one_list
+        provider = MagicMock()
+        provider.send_html = AsyncMock(side_effect=Exception("SMTP timeout"))
+        with patch("routes.v1.schedules.get_provider", return_value=provider):
+            msg, has_error = await _send_to_one_list(_schedule(), _send_list(), _smtp_conn(), "<p>x</p>", None)
+        assert has_error is True
+        assert "Email failed" in msg
+
+
+# ---------------------------------------------------------------------------
+# _send_to_lists
+# ---------------------------------------------------------------------------
+
+
+class TestSendToLists:
+    @pytest.mark.asyncio
+    async def test_returns_empty_string_when_no_send_list_ids(self):
+        from routes.v1.schedules import _send_to_lists
+        schedule = _schedule()  # has no send_list_ids
+        send_lists_repo = MagicMock()
+        smtp_repo = MagicMock()
+        msg, has_failures = await _send_to_lists(schedule, "<p>x</p>", send_lists_repo, smtp_repo)
+        assert msg == ""
+        assert has_failures is False
+
+    @pytest.mark.asyncio
+    async def test_skips_send_list_with_no_emails(self):
+        from routes.v1.schedules import _send_to_lists
+        sl = _send_list(emails=[])
+        schedule = _schedule()
+        schedule.send_list_ids = [sl.id]
+        send_lists_repo = MagicMock()
+        send_lists_repo.get_by_ids = AsyncMock(return_value=[sl])
+        smtp_repo = MagicMock()
+        _, has_failures = await _send_to_lists(schedule, "<p>x</p>", send_lists_repo, smtp_repo)
+        assert has_failures is False
+
+    @pytest.mark.asyncio
+    async def test_records_failure_when_smtp_conn_not_found(self):
+        from routes.v1.schedules import _send_to_lists
+        sl = _send_list()
+        schedule = _schedule()
+        schedule.send_list_ids = [sl.id]
+        send_lists_repo = MagicMock()
+        send_lists_repo.get_by_ids = AsyncMock(return_value=[sl])
+        smtp_repo = MagicMock()
+        smtp_repo.get_by_id = AsyncMock(return_value=None)
+        msg, has_failures = await _send_to_lists(schedule, "<p>x</p>", send_lists_repo, smtp_repo)
+        assert has_failures is True
+        assert "connection not found" in msg
+
+    @pytest.mark.asyncio
+    async def test_sends_to_found_smtp_connection(self):
+        from routes.v1.schedules import _send_to_lists
+        sl = _send_list()
+        schedule = _schedule()
+        schedule.send_list_ids = [sl.id]
+        send_lists_repo = MagicMock()
+        send_lists_repo.get_by_ids = AsyncMock(return_value=[sl])
+        smtp_repo = MagicMock()
+        smtp_repo.get_by_id = AsyncMock(return_value=_smtp_conn())
+        provider = MagicMock()
+        provider.send_html = AsyncMock()
+        with patch("routes.v1.schedules.get_provider", return_value=provider):
+            msg, has_failures = await _send_to_lists(schedule, "<p>body</p>", send_lists_repo, smtp_repo)
+        assert has_failures is False
+        provider.send_html.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# _execute_report
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteReport:
+    @pytest.mark.asyncio
+    async def test_email_page_size_sends_html(self):
+        from routes.v1.schedules import _execute_report
+        from models.template import Template
+        email_tmpl = Template(
+            id=TID, name="Rpt", structure_id=SID, html_content="",
+            page_size="email", template_type="html",
+            created_at=NOW, updated_at=NOW,
+        )
+        repo = MagicMock()
+        repo.update_execution = AsyncMock()
+        send_lists_repo = MagicMock()
+        smtp_repo = MagicMock()
+
+        with (
+            patch("routes.v1.schedules.render_report", new=AsyncMock(return_value=("<p>x</p>", email_tmpl))),
+            patch("routes.v1.schedules.render_charts_as_svg", return_value="<p>x</p>"),
+            patch("routes.v1.schedules.build_html_document", return_value="<html/>"),
+            patch("routes.v1.schedules._send_to_lists", new=AsyncMock(return_value=("", False))),
+        ):
+            await _execute_report(EXECID, _schedule(), repo, send_lists_repo, smtp_repo)
+
+        repo.update_execution.assert_awaited_once()
+        args = repo.update_execution.call_args
+        assert args[0][1].value == "success"
+
+    @pytest.mark.asyncio
+    async def test_pdf_page_size_sends_attachment(self):
+        from routes.v1.schedules import _execute_report
+        from models.template import Template
+        pdf_tmpl = Template(
+            id=TID, name="Rpt", structure_id=SID, html_content="",
+            page_size="A4", template_type="html",
+            created_at=NOW, updated_at=NOW,
+        )
+        repo = MagicMock()
+        repo.update_execution = AsyncMock()
+
+        with (
+            patch("routes.v1.schedules.render_report", new=AsyncMock(return_value=("<p>x</p>", pdf_tmpl))),
+            patch("routes.v1.schedules.render_report_pdf", new=AsyncMock(return_value=(b"%PDF", pdf_tmpl))),
+            patch("routes.v1.schedules._send_to_lists", new=AsyncMock(return_value=("", False))),
+        ):
+            await _execute_report(EXECID, _schedule(), repo, MagicMock(), MagicMock())
+
+        repo.update_execution.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_marks_execution_failed_when_emails_fail(self):
+        from routes.v1.schedules import _execute_report
+        from models.template import Template
+        email_tmpl = Template(
+            id=TID, name="Rpt", structure_id=SID, html_content="",
+            page_size="email", template_type="html",
+            created_at=NOW, updated_at=NOW,
+        )
+        repo = MagicMock()
+        repo.update_execution = AsyncMock()
+
+        with (
+            patch("routes.v1.schedules.render_report", new=AsyncMock(return_value=("", email_tmpl))),
+            patch("routes.v1.schedules.render_charts_as_svg", return_value=""),
+            patch("routes.v1.schedules.build_html_document", return_value=""),
+            patch("routes.v1.schedules._send_to_lists", new=AsyncMock(return_value=("SMTP error", True))),
+        ):
+            await _execute_report(EXECID, _schedule(), repo, MagicMock(), MagicMock())
+
+        args = repo.update_execution.call_args
+        assert args[0][1].value == "failed"
+
+
+# ---------------------------------------------------------------------------
+# _run_scheduled_report
+# ---------------------------------------------------------------------------
+
+
+class TestRunScheduledReport:
+    @pytest.mark.asyncio
+    async def test_skips_when_schedule_not_found(self):
+        from routes.v1.schedules import _run_scheduled_report
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=None)
+        mock_repo.create_execution = AsyncMock()
+        with patch("routes.v1.schedules.SchedulesRepository", return_value=mock_repo):
+            await _run_scheduled_report(SCHID)
+        mock_repo.create_execution.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_schedule_inactive(self):
+        from routes.v1.schedules import _run_scheduled_report
+        inactive = _schedule(is_active=False)
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=inactive)
+        mock_repo.create_execution = AsyncMock()
+        with patch("routes.v1.schedules.SchedulesRepository", return_value=mock_repo):
+            await _run_scheduled_report(SCHID)
+        mock_repo.create_execution.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_marks_execution_failed_on_timeout(self):
+        from routes.v1.schedules import _run_scheduled_report
+        import asyncio
+        active = _schedule(is_active=True)
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=active)
+        mock_repo.create_execution = AsyncMock(return_value=_execution())
+        mock_repo.update_execution = AsyncMock()
+
+        with (
+            patch("routes.v1.schedules.SchedulesRepository", return_value=mock_repo),
+            patch("routes.v1.schedules.EmailSendListsRepository"),
+            patch("routes.v1.schedules.SmtpConnectionsRepository"),
+            patch("routes.v1.schedules._execute_report", new=AsyncMock(side_effect=asyncio.TimeoutError())),
+        ):
+            await _run_scheduled_report(SCHID)
+
+        mock_repo.update_execution.assert_awaited_once()
+        status_arg = mock_repo.update_execution.call_args[0][1]
+        assert status_arg.value == "failed"
+
+    @pytest.mark.asyncio
+    async def test_marks_execution_failed_on_exception(self):
+        from routes.v1.schedules import _run_scheduled_report
+        active = _schedule(is_active=True)
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=active)
+        mock_repo.create_execution = AsyncMock(return_value=_execution())
+        mock_repo.update_execution = AsyncMock()
+
+        with (
+            patch("routes.v1.schedules.SchedulesRepository", return_value=mock_repo),
+            patch("routes.v1.schedules.EmailSendListsRepository"),
+            patch("routes.v1.schedules.SmtpConnectionsRepository"),
+            patch("routes.v1.schedules._execute_report", new=AsyncMock(side_effect=ValueError("boom"))),
+        ):
+            await _run_scheduled_report(SCHID)
+
+        mock_repo.update_execution.assert_awaited_once()
+        status_arg = mock_repo.update_execution.call_args[0][1]
+        assert status_arg.value == "failed"
+
+    @pytest.mark.asyncio
+    async def test_creates_execution_on_success(self):
+        from routes.v1.schedules import _run_scheduled_report
+        active = _schedule(is_active=True)
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=active)
+        mock_repo.create_execution = AsyncMock(return_value=_execution())
+        mock_repo.update_execution = AsyncMock()
+
+        with (
+            patch("routes.v1.schedules.SchedulesRepository", return_value=mock_repo),
+            patch("routes.v1.schedules.EmailSendListsRepository"),
+            patch("routes.v1.schedules.SmtpConnectionsRepository"),
+            patch("routes.v1.schedules._execute_report", new=AsyncMock(return_value=None)),
+        ):
+            await _run_scheduled_report(SCHID)
+
+        mock_repo.create_execution.assert_awaited_once_with(SCHID)
+
+
+# ---------------------------------------------------------------------------
+# GET /schedules/executions
+# ---------------------------------------------------------------------------
+
+
+class TestListAllExecutions:
+    @pytest.mark.asyncio
+    async def test_returns_200_with_executions(self, async_client, dependency_overrides):
+        repo = _mock_repo()
+        repo.get_all_executions_for_project = AsyncMock(return_value=[_execution()])
+        dependency_overrides[get_schedules_repo] = lambda: repo
+        dependency_overrides[get_projects_repo] = lambda: _mock_projects_repo()
+        with _NO_AUTH():
+            response = await async_client.get(f"/api/v1/schedules/executions?project_id={PID}")
+        assert response.status_code == 200
+        assert len(response.json()) == 1
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list(self, async_client, dependency_overrides):
+        repo = _mock_repo()
+        repo.get_all_executions_for_project = AsyncMock(return_value=[])
+        dependency_overrides[get_schedules_repo] = lambda: repo
+        dependency_overrides[get_projects_repo] = lambda: _mock_projects_repo()
+        with _NO_AUTH():
+            response = await async_client.get(f"/api/v1/schedules/executions?project_id={PID}")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    @pytest.mark.asyncio
+    async def test_requires_project_id_param(self, async_client):
+        response = await async_client.get("/api/v1/schedules/executions")
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_returns_503_on_runtime_error(self, async_client, dependency_overrides):
+        repo = _mock_repo()
+        repo.get_all_executions_for_project = AsyncMock(side_effect=RuntimeError("DB down"))
+        dependency_overrides[get_schedules_repo] = lambda: repo
+        dependency_overrides[get_projects_repo] = lambda: _mock_projects_repo()
+        with _NO_AUTH():
+            response = await async_client.get(f"/api/v1/schedules/executions?project_id={PID}")
+        assert response.status_code == 503

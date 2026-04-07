@@ -98,6 +98,11 @@ function connect() {
   ws.onerror = () => {
     connected.value = false
     connecting.value = false
+    messages.value.push({
+      id: nextMsgId++,
+      role: 'assistant',
+      content: '**Connection error.** Use the reconnect button to try again.',
+    })
   }
 }
 

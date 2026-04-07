@@ -23,7 +23,7 @@ class ImageCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     project_id: UUID
-    filename: str
+    filename: str = Field(min_length=1, max_length=255)
     mime_type: str
     size_bytes: int
     data_base64: str
@@ -32,4 +32,4 @@ class ImageCreate(BaseModel):
 class ImageUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    filename: Optional[str] = None
+    filename: Optional[str] = Field(None, max_length=255)

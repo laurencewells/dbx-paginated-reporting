@@ -3,7 +3,27 @@ import { ref, computed } from 'vue'
 import { useProjectsStore } from '@/stores/projects'
 import { useToastStore } from '@/stores/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/vue-query'
-import axios from 'axios'
+import {
+  listSchedulesApiV1SchedulesGet,
+  listAllExecutionsApiV1SchedulesExecutionsGet,
+  createScheduleApiV1SchedulesPost,
+  updateScheduleApiV1SchedulesScheduleIdPut,
+  deleteScheduleApiV1SchedulesScheduleIdDelete,
+  triggerScheduleApiV1SchedulesScheduleIdTriggerPost,
+} from '@/api/generated/schedules/schedules'
+import { listSmtpConnectionsApiV1SmtpConnectionsGet } from '@/api/generated/smtp-connections/smtp-connections'
+import {
+  listSendListsApiV1SendListsGet,
+  createSendListApiV1SendListsPost,
+  updateSendListApiV1SendListsSendListIdPut,
+  deleteSendListApiV1SendListsSendListIdDelete,
+} from '@/api/generated/send-lists/send-lists'
+import { listProjectReportsApiV1ProjectsProjectIdReportsGet } from '@/api/generated/projects/projects'
+import type {
+  Schedule, ScheduleCreate, ScheduleUpdate,
+  EmailSendList, EmailSendListCreate, EmailSendListUpdate,
+} from '@/api/generated'
+import { AXIOS_INSTANCE } from '@/api/axios-instance'
 import CronDescription from '@/components/CronDescription.vue'
 
 const projectsStore = useProjectsStore()
@@ -16,49 +36,7 @@ const activeProjectId = computed(() => projectsStore.activeProjectId)
 
 const activeTab = ref<'schedules' | 'send-lists'>('schedules')
 
-// ---- API helpers -----------------------------------------------------------
-
-async function apiGet<T>(url: string, params?: Record<string, unknown>): Promise<T> {
-  const { data } = await axios.get(url, { params })
-  return data
-}
-async function apiPost<T>(url: string, body: unknown): Promise<T> {
-  const { data } = await axios.post(url, body)
-  return data
-}
-async function apiPut<T>(url: string, body: unknown): Promise<T> {
-  const { data } = await axios.put(url, body)
-  return data
-}
-async function apiDelete(url: string): Promise<void> {
-  await axios.delete(url)
-}
-
 // ---- Types -----------------------------------------------------------------
-
-interface Schedule {
-  id: string
-  name: string
-  project_id: string
-  structure_id: string
-  template_id: string
-  cron_expression: string
-  is_active: boolean
-  created_by: string
-  created_at: string
-  updated_at: string
-  send_list_ids: string[]
-}
-
-interface ScheduleExecution {
-  id: string
-  schedule_id: string
-  status: 'pending' | 'running' | 'success' | 'failed'
-  started_at: string | null
-  completed_at: string | null
-  error_message: string | null
-  created_at: string
-}
 
 interface ProjectReport {
   template_id: string
@@ -68,36 +46,21 @@ interface ProjectReport {
   structure_name: string
 }
 
-interface SmtpConnection {
-  id: string
-  name: string
-  provider: string
-}
-
-interface EmailSendList {
-  id: string
-  name: string
-  project_id: string
-  smtp_connection_id: string
-  emails: string[]
-  created_by: string
-  created_at: string
-  updated_at: string
-}
 
 // ---- Reports (for dropdown) ------------------------------------------------
 
-const { data: reports } = useQuery({
+const { data: reportsRaw } = useQuery({
   queryKey: computed(() => ['project-reports', activeProjectId.value]),
-  queryFn: () => apiGet<ProjectReport[]>(`/api/v1/projects/${activeProjectId.value}/reports`),
+  queryFn: () => listProjectReportsApiV1ProjectsProjectIdReportsGet(activeProjectId.value!),
   enabled: computed(() => !!activeProjectId.value),
 })
+const reports = computed(() => reportsRaw.value as unknown as ProjectReport[] | undefined)
 
 // ---- SMTP connections (for send list dropdown) ----------------------------
 
 const { data: smtpConnections } = useQuery({
   queryKey: ['smtp-connections'],
-  queryFn: () => apiGet<SmtpConnection[]>('/api/v1/smtp-connections/'),
+  queryFn: () => listSmtpConnectionsApiV1SmtpConnectionsGet(),
 })
 
 function smtpConnectionName(id: string) {
@@ -110,7 +73,7 @@ const schedulesQueryKey = computed(() => ['schedules', activeProjectId.value])
 
 const { data: schedules, isLoading: schedulesLoading } = useQuery({
   queryKey: schedulesQueryKey,
-  queryFn: () => apiGet<Schedule[]>('/api/v1/schedules/', { project_id: activeProjectId.value }),
+  queryFn: () => listSchedulesApiV1SchedulesGet({ project_id: activeProjectId.value! }),
   enabled: computed(() => !!activeProjectId.value),
 })
 
@@ -124,7 +87,7 @@ const sendListsQueryKey = computed(() => ['send-lists', activeProjectId.value])
 
 const { data: sendLists, isLoading: sendListsLoading } = useQuery({
   queryKey: sendListsQueryKey,
-  queryFn: () => apiGet<EmailSendList[]>('/api/v1/send-lists/', { project_id: activeProjectId.value }),
+  queryFn: () => listSendListsApiV1SendListsGet({ project_id: activeProjectId.value! }),
   enabled: computed(() => !!activeProjectId.value),
 })
 
@@ -144,8 +107,7 @@ const selectedScheduleId = ref<string | null>(null)
 
 const { data: allExecutions, isLoading: executionsLoading } = useQuery({
   queryKey: computed(() => ['executions', activeProjectId.value]),
-  queryFn: () =>
-    apiGet<ScheduleExecution[]>('/api/v1/schedules/executions', { project_id: activeProjectId.value }),
+  queryFn: () => listAllExecutionsApiV1SchedulesExecutionsGet({ project_id: activeProjectId.value! }),
   enabled: computed(() => !!activeProjectId.value),
 })
 
@@ -190,7 +152,7 @@ async function downloadRender(s: Schedule) {
   const isPdf = report?.page_size !== 'email'
   const url = `/api/v1/templates/${s.template_id}/${isPdf ? 'render-pdf' : 'render'}`
   try {
-    const response = await axios.get(url, { responseType: 'blob' })
+    const response = await AXIOS_INSTANCE.get(url, { responseType: 'blob' })
     const blob = new Blob([response.data], { type: isPdf ? 'application/pdf' : 'text/html' })
     const disposition: string = response.headers['content-disposition'] ?? ''
     const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? `report.${isPdf ? 'pdf' : 'html'}`
@@ -274,7 +236,7 @@ function resolvedCron(): string {
 }
 
 const createMutation = useMutation({
-  mutationFn: (body: object) => apiPost<Schedule>('/api/v1/schedules/', body),
+  mutationFn: (data: ScheduleCreate) => createScheduleApiV1SchedulesPost(data),
   onSuccess: () => { invalidateSchedules(); toastStore.success('Schedule created') },
   onError: (err: unknown) => {
     const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -283,8 +245,8 @@ const createMutation = useMutation({
 })
 
 const updateMutation = useMutation({
-  mutationFn: ({ id, body }: { id: string; body: object }) =>
-    apiPut<Schedule>(`/api/v1/schedules/${id}`, body),
+  mutationFn: ({ id, body }: { id: string; body: ScheduleUpdate }) =>
+    updateScheduleApiV1SchedulesScheduleIdPut(id, body),
   onSuccess: () => { invalidateSchedules(); toastStore.success('Schedule updated') },
   onError: (err: unknown) => {
     const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -293,13 +255,13 @@ const updateMutation = useMutation({
 })
 
 const deleteMutation = useMutation({
-  mutationFn: (id: string) => apiDelete(`/api/v1/schedules/${id}`),
+  mutationFn: (id: string) => deleteScheduleApiV1SchedulesScheduleIdDelete(id),
   onSuccess: () => { invalidateSchedules(); toastStore.success('Schedule deleted') },
   onError: () => toastStore.error('Failed to delete schedule'),
 })
 
 const triggerMutation = useMutation({
-  mutationFn: (id: string) => apiPost(`/api/v1/schedules/${id}/trigger`, {}),
+  mutationFn: (id: string) => triggerScheduleApiV1SchedulesScheduleIdTriggerPost(id),
   onSuccess: (_data, id) => {
     toastStore.success('Execution triggered')
     selectedScheduleId.value = id
@@ -331,7 +293,7 @@ async function submitForm() {
     } else {
       await createMutation.mutateAsync({
         name: form.value.name.trim(),
-        project_id: activeProjectId.value,
+        project_id: activeProjectId.value!,
         structure_id: selectedFormReport.value!.structure_id,
         template_id: form.value.template_id,
         cron_expression: cron,
@@ -396,7 +358,7 @@ function handleEmailKeydown(e: KeyboardEvent) {
 }
 
 const createSendListMutation = useMutation({
-  mutationFn: (body: object) => apiPost<EmailSendList>('/api/v1/send-lists/', body),
+  mutationFn: (data: EmailSendListCreate) => createSendListApiV1SendListsPost(data),
   onSuccess: () => { invalidateSendLists(); toastStore.success('Send list created') },
   onError: (err: unknown) => {
     const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -405,8 +367,8 @@ const createSendListMutation = useMutation({
 })
 
 const updateSendListMutation = useMutation({
-  mutationFn: ({ id, body }: { id: string; body: object }) =>
-    apiPut<EmailSendList>(`/api/v1/send-lists/${id}`, body),
+  mutationFn: ({ id, body }: { id: string; body: EmailSendListUpdate }) =>
+    updateSendListApiV1SendListsSendListIdPut(id, body),
   onSuccess: () => { invalidateSendLists(); toastStore.success('Send list updated') },
   onError: (err: unknown) => {
     const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -415,7 +377,7 @@ const updateSendListMutation = useMutation({
 })
 
 const deleteSendListMutation = useMutation({
-  mutationFn: (id: string) => apiDelete(`/api/v1/send-lists/${id}`),
+  mutationFn: (id: string) => deleteSendListApiV1SendListsSendListIdDelete(id),
   onSuccess: () => { invalidateSendLists(); toastStore.success('Send list deleted') },
   onError: () => toastStore.error('Failed to delete send list'),
 })
@@ -432,7 +394,7 @@ async function submitSendListForm() {
       name: sendListForm.value.name.trim(),
       smtp_connection_id: sendListForm.value.smtp_connection_id,
       emails: sendListForm.value.emails,
-      project_id: activeProjectId.value,
+      project_id: activeProjectId.value!,
     }
     if (editingSendList.value) {
       await updateSendListMutation.mutateAsync({ id: editingSendList.value.id, body })
@@ -454,12 +416,12 @@ const statusBadge: Record<string, string> = {
   failed: 'bg-danger',
 }
 
-function fmtDate(d: string | null) {
+function fmtDate(d: string | null | undefined) {
   if (!d) return '—'
   return new Date(d).toLocaleString()
 }
 
-function fmtDuration(start: string | null, end: string | null) {
+function fmtDuration(start: string | null | undefined, end: string | null | undefined) {
   if (!start || !end) return '—'
   const ms = new Date(end).getTime() - new Date(start).getTime()
   if (ms < 1000) return `${ms}ms`

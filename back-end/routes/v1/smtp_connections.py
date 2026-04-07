@@ -14,7 +14,8 @@ router = APIRouter(prefix="/smtp-connections", tags=["smtp-connections"])
 
 _PROVIDER_DEFAULTS = {
     "gsuite": {"smtp_host": "smtp.gmail.com", "smtp_port": 587},
-    # sendgrid uses the API SDK — no SMTP host/port needed
+    # smtp: user supplies host/port/username — no defaults applied
+    # sendgrid: uses the API SDK — no SMTP host/port needed
 }
 
 
