@@ -551,6 +551,103 @@ class TestRenderReportMarkdown:
 
 
 # ---------------------------------------------------------------------------
+# build_email_html_document
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEmailHtmlDocument:
+    def test_returns_valid_html_wrapper(self):
+        from services.report_renderer import build_email_html_document
+
+        result = build_email_html_document("<p>Body</p>", "My Report")
+        assert result.startswith("<!DOCTYPE html>") or "<html" in result
+        # css-inline adds style="" attributes so the bare tag won't match; check text content
+        assert "Body" in result
+
+    def test_title_embedded(self):
+        from services.report_renderer import build_email_html_document
+
+        result = build_email_html_document("", "Email Report")
+        assert "Email Report" in result
+
+    def test_bootstrap_utilities_are_inlined(self):
+        from services.report_renderer import build_email_html_document
+
+        # text-muted maps to color:#6c757d in Bootstrap — inlining should produce a style attr
+        body = '<span class="text-muted">hint</span>'
+        result = build_email_html_document(body, "T")
+        assert "style=" in result
+        assert "6c757d" in result
+
+    def test_no_bootstrap_cdn_link(self):
+        from services.report_renderer import build_email_html_document
+
+        result = build_email_html_document("", "T")
+        assert "cdn.jsdelivr.net" not in result
+
+    def test_markdown_styles_included_when_flag_set(self):
+        from services.report_renderer import build_email_html_document
+
+        # css-inline inlines rules onto matching elements; pass a .markdown-body div
+        # so the line-height rule from _MARKDOWN_STYLES gets applied
+        result = build_email_html_document('<div class="markdown-body"><p>hi</p></div>', "T", is_markdown=True)
+        assert "1.7" in result  # line-height: 1.7 from _MARKDOWN_STYLES
+
+    def test_no_markdown_styles_by_default(self):
+        from services.report_renderer import build_email_html_document
+
+        result = build_email_html_document("", "T", is_markdown=False)
+        assert "markdown-body" not in result
+
+    def test_css_inline_failure_falls_back_to_unannotated_html(self):
+        import css_inline
+        from services.report_renderer import build_email_html_document
+
+        with patch.object(css_inline, "CSSInliner", side_effect=RuntimeError("inliner broke")):
+            result = build_email_html_document("<p>ok</p>", "T")
+        assert "ok" in result
+
+
+# ---------------------------------------------------------------------------
+# _bootstrap_css singleton
+# ---------------------------------------------------------------------------
+
+
+class TestBootstrapCssSingleton:
+    def test_returns_non_empty_string(self):
+        import services.report_renderer as rr
+
+        css = rr._bootstrap_css()
+        assert isinstance(css, str)
+        assert len(css) > 10_000  # Bootstrap minified is ~230 KB
+
+    def test_cached_on_second_call(self):
+        import services.report_renderer as rr
+
+        rr._bootstrap_css_cache = None  # reset
+        first = rr._bootstrap_css()
+        second = rr._bootstrap_css()
+        assert first is second  # same object — cached
+
+    def test_cache_populated_after_call(self):
+        import services.report_renderer as rr
+
+        rr._bootstrap_css_cache = None
+        rr._bootstrap_css()
+        assert rr._bootstrap_css_cache is not None
+
+    def test_raises_when_vendor_file_missing(self, tmp_path, monkeypatch):
+        import services.report_renderer as rr
+
+        rr._bootstrap_css_cache = None
+        # Point the module file to a tmp dir that has no vendor/ subdir
+        monkeypatch.setattr(rr, "__file__", str(tmp_path / "report_renderer.py"))
+        with pytest.raises(FileNotFoundError):
+            rr._bootstrap_css()
+        rr._bootstrap_css_cache = None  # clean up so other tests aren't affected
+
+
+# ---------------------------------------------------------------------------
 # render_charts_as_svg — additional edge cases
 # ---------------------------------------------------------------------------
 
