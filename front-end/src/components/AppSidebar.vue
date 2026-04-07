@@ -143,30 +143,40 @@ const componentSnippets = [
     name: 'Tile Row',
     icon: 'bi-grid-3x2',
     description: '4 tiles in a row',
-    snippet: `<div class="row mb-4">
-  <div class="col-md-3">
-    <div class="report-tile tile-primary">
-      <div class="report-tile-title">Metric 1</div>
-      <div class="report-tile-value">{{value1}}</div>
-    </div>
+    snippet: `<div class="report-grid-4 mb-4">
+  <div class="report-tile tile-primary">
+    <div class="report-tile-title">Metric 1</div>
+    <div class="report-tile-value">{{value1}}</div>
   </div>
-  <div class="col-md-3">
-    <div class="report-tile tile-success">
-      <div class="report-tile-title">Metric 2</div>
-      <div class="report-tile-value">{{value2}}</div>
-    </div>
+  <div class="report-tile tile-success">
+    <div class="report-tile-title">Metric 2</div>
+    <div class="report-tile-value">{{value2}}</div>
   </div>
-  <div class="col-md-3">
-    <div class="report-tile tile-warning">
-      <div class="report-tile-title">Metric 3</div>
-      <div class="report-tile-value">{{value3}}</div>
-    </div>
+  <div class="report-tile tile-warning">
+    <div class="report-tile-title">Metric 3</div>
+    <div class="report-tile-value">{{value3}}</div>
   </div>
-  <div class="col-md-3">
-    <div class="report-tile tile-danger">
-      <div class="report-tile-title">Metric 4</div>
-      <div class="report-tile-value">{{value4}}</div>
-    </div>
+  <div class="report-tile tile-danger">
+    <div class="report-tile-title">Metric 4</div>
+    <div class="report-tile-value">{{value4}}</div>
+  </div>
+</div>`,
+  },
+  {
+    name: 'Grid Layout',
+    icon: 'bi-layout-three-columns',
+    description: 'Multi-column grid (PDF-safe)',
+    snippet: `<!-- Equal columns: report-grid-2 / report-grid-3 / report-grid-4 -->
+<!-- Unequal splits: report-grid-1-2 / report-grid-2-1 / report-grid-1-3 / report-grid-3-1 -->
+<div class="report-grid-3">
+  <div>
+    <!-- Column 1 -->
+  </div>
+  <div>
+    <!-- Column 2 -->
+  </div>
+  <div>
+    <!-- Column 3 -->
   </div>
 </div>`,
   },

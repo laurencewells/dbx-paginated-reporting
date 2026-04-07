@@ -71,6 +71,27 @@ _REPORT_STYLES = """
   .g-2 > *, .gx-2 > * { padding-right: 0.5rem  !important; padding-left: 0.5rem  !important; }
   .g-3 > *, .gx-3 > * { padding-right: 0.75rem !important; padding-left: 0.75rem !important; }
   .g-4 > *, .gx-4 > * { padding-right: 1rem    !important; padding-left: 1rem    !important; }
+  /* Pagination magic — page break commands */
+  .page-break { height: 0; margin: 0; padding: 0; border: none; display: block; page-break-after: always; break-after: page; }
+  .page-break-before { height: 0; margin: 0; padding: 0; border: none; display: block; page-break-before: always; break-before: page; }
+  .no-break { break-inside: avoid; page-break-inside: avoid; }
+  /* Pagination magic — multi-column layouts */
+  .report-columns-2 { column-count: 2; column-gap: 2rem; }
+  .report-columns-3 { column-count: 3; column-gap: 1.5rem; }
+  .report-columns-4 { column-count: 4; column-gap: 1rem; }
+  /* Report grid — media-query-free CSS Grid for reliable PDF/email output.
+     Prefer these over Bootstrap col-* in templates. Keep in sync with REPORT_STYLES
+     in front-end/src/components/PreviewExportModal.vue. */
+  .report-grid-2   { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+  .report-grid-3   { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .report-grid-4   { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+  .report-grid-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 1rem; }
+  .report-grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+  .report-grid-1-3 { display: grid; grid-template-columns: 1fr 3fr; gap: 1rem; }
+  .report-grid-3-1 { display: grid; grid-template-columns: 3fr 1fr; gap: 1rem; }
+  /* Pagination magic — global header/footer (injected into every .report-page by the renderer) */
+  .report-global-header { border-bottom: 2px solid #2d3e50; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  .report-global-footer { border-top: 1px solid #dee2e6; padding-top: 0.75rem; margin-top: 1.5rem; font-size: 0.8rem; color: #6c757d; }
 """
 
 # Inline SVG chart renderer — mirrors chartSvg.ts in the frontend.
