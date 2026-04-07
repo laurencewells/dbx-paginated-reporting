@@ -5,7 +5,6 @@ All external dependencies (repos, DataQueryService, chevron) are mocked.
 """
 from __future__ import annotations
 
-import sys
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -339,45 +338,6 @@ class TestRenderChartsAsSvg:
 # ---------------------------------------------------------------------------
 
 
-class TestRenderReportPdf:
-    """
-    weasyprint requires system libs not present in dev/CI.
-    Mock render_report directly and patch weasyprint in sys.modules.
-    """
-
-    @pytest.mark.asyncio
-    async def test_returns_pdf_bytes_and_template(self):
-        tmpl = _template()
-        fake_pdf = b"%PDF-1.4 fake"
-        mock_wp = MagicMock()
-        mock_wp.HTML.return_value.write_pdf.return_value = fake_pdf
-
-        with (
-            patch.dict(sys.modules, {"weasyprint": mock_wp}),
-            patch("services.report_renderer.render_report", new=AsyncMock(return_value=("<html/>", tmpl))),
-        ):
-            from services.report_renderer import render_report_pdf
-            pdf_bytes, returned_template = await render_report_pdf(TID)
-
-        assert pdf_bytes == fake_pdf
-        assert returned_template.id == TID
-        mock_wp.HTML.assert_called_once()
-        html_arg = mock_wp.HTML.call_args.kwargs["string"]
-        assert "<html/>" in html_arg  # body is embedded in the full document
-
-    @pytest.mark.asyncio
-    async def test_raises_runtime_error_when_weasyprint_fails(self):
-        tmpl = _template()
-        mock_wp = MagicMock()
-        mock_wp.HTML.return_value.write_pdf.side_effect = Exception("cairo error")
-
-        with (
-            patch.dict(sys.modules, {"weasyprint": mock_wp}),
-            patch("services.report_renderer.render_report", new=AsyncMock(return_value=("<html/>", tmpl))),
-        ):
-            from services.report_renderer import render_report_pdf
-            with pytest.raises(RuntimeError, match="Failed to convert"):
-                await render_report_pdf(TID)
 
 # ---------------------------------------------------------------------------
 # process_layout_magic — _inject_global_header_footer

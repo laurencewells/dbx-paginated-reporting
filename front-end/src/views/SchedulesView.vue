@@ -148,14 +148,12 @@ const downloadingId = ref<string | null>(null)
 async function downloadRender(s: Schedule) {
   if (downloadingId.value) return
   downloadingId.value = s.id
-  const report = reports.value?.find((r) => r.template_id === s.template_id)
-  const isPdf = report?.page_size !== 'email'
-  const url = `/api/v1/templates/${s.template_id}/${isPdf ? 'render-pdf' : 'render'}`
+  const url = `/api/v1/templates/${s.template_id}/render`
   try {
     const response = await AXIOS_INSTANCE.get(url, { responseType: 'blob' })
-    const blob = new Blob([response.data], { type: isPdf ? 'application/pdf' : 'text/html' })
+    const blob = new Blob([response.data], { type: 'text/html' })
     const disposition: string = response.headers['content-disposition'] ?? ''
-    const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? `report.${isPdf ? 'pdf' : 'html'}`
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? 'report.html'
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
     link.download = filename

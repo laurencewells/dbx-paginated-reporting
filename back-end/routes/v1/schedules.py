@@ -1,7 +1,7 @@
 import asyncio
 import os
 import uuid as _uuid
-from typing import List, Optional
+from typing import List
 from uuid import UUID
 
 from apscheduler.jobstores.base import JobLookupError
@@ -23,7 +23,7 @@ from models.schedule import ExecutionStatus, Schedule, ScheduleCreate, ScheduleE
 from repositories.email_send_lists import EmailSendListsRepository
 from repositories.schedules import SchedulesRepository
 from repositories.smtp_connections import SmtpConnectionsRepository
-from services.report_renderer import build_html_document, render_charts_as_svg, render_report, render_report_pdf
+from services.report_renderer import build_email_html_document, render_charts_as_svg, render_report
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -86,26 +86,16 @@ async def _send_to_one_list(
     send_list,
     smtp_conn,
     html_body: str,
-    pdf_bytes: Optional[bytes],
 ) -> tuple[str, bool]:
     """Send to a single list. Returns (message, has_error)."""
     try:
         provider = get_provider(smtp_conn)
-        if pdf_bytes is not None:
-            await provider.send_attachment(
-                from_email=smtp_conn.from_email,
-                recipients=send_list.emails,
-                subject=f"Scheduled Report: {schedule.name}",
-                pdf_bytes=pdf_bytes,
-                filename=f"{schedule.name}.pdf",
-            )
-        else:
-            await provider.send_html(
-                from_email=smtp_conn.from_email,
-                recipients=send_list.emails,
-                subject=f"Scheduled Report: {schedule.name}",
-                html_body=html_body,
-            )
+        await provider.send_html(
+            from_email=smtp_conn.from_email,
+            recipients=send_list.emails,
+            subject=f"Scheduled Report: {schedule.name}",
+            html_body=html_body,
+        )
         return f"Emails sent: {send_list.name} ({len(send_list.emails)} recipient(s))", False
     except Exception as e:
         L.error(f"[Scheduler] Email failed for send list {send_list.name}: {e}")
@@ -117,12 +107,8 @@ async def _send_to_lists(
     html_body: str,
     send_lists_repo: EmailSendListsRepository,
     smtp_repo: SmtpConnectionsRepository,
-    pdf_bytes: Optional[bytes] = None,
 ) -> tuple[str, bool]:
-    """Send the rendered report to all attached send lists.
-
-    If pdf_bytes is provided the report is delivered as a PDF attachment;
-    otherwise the rendered HTML is sent inline.
+    """Send the rendered report as HTML to all attached send lists.
 
     Returns a tuple of (summary_message, has_failures).
     """
@@ -141,7 +127,7 @@ async def _send_to_lists(
             has_failures = True
             lines.append(f"Email failed: {sl.name} — connection not found")
             continue
-        message, error = await _send_to_one_list(schedule, sl, conn, html_body, pdf_bytes)
+        message, error = await _send_to_one_list(schedule, sl, conn, html_body)
         lines.append(message)
         if error:
             has_failures = True
@@ -158,14 +144,10 @@ async def _execute_report(
 ) -> None:
     """Core report execution logic — called inside a timeout wrapper."""
     html_body, template = await render_report(schedule.template_id)
-    if template.page_size == "email":
-        is_markdown = template.template_type == "markdown"
-        body = render_charts_as_svg(html_body or "")
-        full_html = build_html_document(body, template.name, is_markdown=is_markdown)
-        email_summary, email_failures = await _send_to_lists(schedule, full_html, send_lists_repo, smtp_repo)
-    else:
-        pdf_bytes, _ = await render_report_pdf(schedule.template_id)
-        email_summary, email_failures = await _send_to_lists(schedule, html_body or "", send_lists_repo, smtp_repo, pdf_bytes=pdf_bytes)
+    is_markdown = template.template_type == "markdown"
+    body = render_charts_as_svg(html_body or "")
+    full_html = build_email_html_document(body, template.name, is_markdown=is_markdown)
+    email_summary, email_failures = await _send_to_lists(schedule, full_html, send_lists_repo, smtp_repo)
 
     status = ExecutionStatus.failed if email_failures else ExecutionStatus.success
     await repo.update_execution(execution_id, status, error_message=email_summary or None)

@@ -149,12 +149,12 @@ async def render_template_html(
     """Server-side render to HTML — for testing scheduled output."""
     await check_template_read_access(template_id, email, repo, structures_repo, projects_repo)
     try:
-        from services.report_renderer import build_html_document, inline_images, render_charts_as_svg, render_report
+        from services.report_renderer import build_email_html_document, inline_images, render_charts_as_svg, render_report
         body, template = await render_report(template_id)
         body = await inline_images(body)
         body = render_charts_as_svg(body)
         is_markdown = template.template_type == "markdown"
-        html = build_html_document(body, template.name, is_markdown=is_markdown)
+        html = build_email_html_document(body, template.name, is_markdown=is_markdown)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
@@ -166,30 +166,6 @@ async def render_template_html(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
-
-@router.get("/{template_id}/render-pdf")
-async def render_template_pdf(
-    template_id: UUID,
-    email: CurrentUser,
-    repo: TemplatesRepo,
-    structures_repo: StructuresRepo,
-    projects_repo: ProjectsRepo,
-):
-    """Server-side render to PDF — for testing scheduled output."""
-    await check_template_read_access(template_id, email, repo, structures_repo, projects_repo)
-    try:
-        from services.report_renderer import render_report_pdf
-        pdf_bytes, template = await render_report_pdf(template_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    filename = _safe_filename(template.name) + ".pdf"
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
 
 
 @router.post("/{template_id}/preview-data", response_model=Dict[str, Any])
