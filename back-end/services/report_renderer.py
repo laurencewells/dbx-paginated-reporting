@@ -8,6 +8,7 @@ principal credentials (from environment) are used by SQLConnector by default.
 """
 
 import re
+from pathlib import Path
 from uuid import UUID
 
 import altair as alt
@@ -46,7 +47,7 @@ _REPORT_STYLES = """
   .chart-title { font-size: 1rem; font-weight: 600; color: #2d3e50; margin-bottom: 1rem; }
   .report-bar-chart, .report-pie-chart { position: relative; width: 100%; max-height: 300px; }
   .page-number { text-align: center; font-size: 0.75rem; color: #999; padding-top: 1.5rem; margin-top: auto; border-top: 1px solid #eee; }
-  /* Bootstrap grid overrides — applied unconditionally so WeasyPrint (no viewport) and
+  /* Bootstrap grid overrides — applied unconditionally so Chromium/Playwright (no viewport) and
      downloaded HTML files render columns correctly without relying on @media breakpoints. */
   .row { display: flex !important; flex-wrap: wrap !important; margin-right: -0.75rem; margin-left: -0.75rem; }
   [class*="col-"] { flex-shrink: 0; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
@@ -80,6 +81,16 @@ _REPORT_STYLES = """
   .report-columns-2 { column-count: 2; column-gap: 2rem; }
   .report-columns-3 { column-count: 3; column-gap: 1.5rem; }
   .report-columns-4 { column-count: 4; column-gap: 1rem; }
+  /* Report grid — media-query-free CSS Grid for reliable PDF/email output.
+     Prefer these over Bootstrap col-* in templates. Keep in sync with REPORT_STYLES
+     in front-end/src/components/PreviewExportModal.vue. */
+  .report-grid-2   { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+  .report-grid-3   { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .report-grid-4   { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+  .report-grid-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 1rem; }
+  .report-grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+  .report-grid-1-3 { display: grid; grid-template-columns: 1fr 3fr; gap: 1rem; }
+  .report-grid-3-1 { display: grid; grid-template-columns: 3fr 1fr; gap: 1rem; }
   /* Pagination magic — global header/footer (injected into every .report-page by the renderer) */
   .report-global-header { border-bottom: 2px solid #2d3e50; padding-bottom: 1rem; margin-bottom: 1.5rem; }
   .report-global-footer { border-top: 1px solid #dee2e6; padding-top: 0.75rem; margin-top: 1.5rem; font-size: 0.8rem; color: #6c757d; }
@@ -397,8 +408,8 @@ _IMAGE_SRC_RE = re.compile(
 
 async def inline_images(html: str) -> str:
     """
-    Replace img:UUID src attributes with base64 data URIs fetched directly
-    from the database.
+    Replace img:UUID src attributes (e.g. src="img:abc123...") with base64
+    data URIs fetched directly from the database.
 
     Safe to call for both HTML downloads and WeasyPrint — images that cannot
     be resolved are left as-is rather than raising.
@@ -446,6 +457,107 @@ def build_html_document(body: str, title: str, is_markdown: bool = False) -> str
     )
 
 
+# Email-safe styles: no @page, no print-only properties, no page-break utilities.
+_bootstrap_css_cache: str | None = None
+
+
+def _bootstrap_css() -> str:
+    """Return Bootstrap 5 minified CSS, loaded once from vendor/ and cached."""
+    global _bootstrap_css_cache
+    if _bootstrap_css_cache is None:
+        vendor = Path(__file__).parent.parent / "vendor" / "bootstrap.min.css"
+        _bootstrap_css_cache = vendor.read_text(encoding="utf-8")
+    return _bootstrap_css_cache
+
+
+# Custom report/email styles — appended after Bootstrap so they take precedence.
+# Bootstrap CDN is intentionally omitted from email documents; the full Bootstrap
+# CSS is loaded from vendor/bootstrap.min.css and inlined by build_email_html_document().
+_EMAIL_STYLES = """
+  body { margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; color: #212529; font-size: 14px; }
+  .report-page { padding: 16px 20px; position: relative; max-width: 100%; overflow: hidden; }
+  h1, h2, h3 { color: #2d3e50; }
+  h1 { font-weight: 700; }
+  .report-tile { background: linear-gradient(135deg, #3498db 0%, #2980b9 100%); color: white; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 4px 15px rgba(52,152,219,0.3); }
+  .report-tile.tile-primary { background: linear-gradient(135deg, #2d3e50 0%, #34495e 100%); box-shadow: 0 4px 15px rgba(45,62,80,0.3); }
+  .report-tile.tile-success { background: linear-gradient(135deg, #27ae60 0%, #1e8449 100%); box-shadow: 0 4px 15px rgba(39,174,96,0.3); }
+  .report-tile.tile-warning { background: linear-gradient(135deg, #f39c12 0%, #d68910 100%); box-shadow: 0 4px 15px rgba(243,156,18,0.3); }
+  .report-tile.tile-danger { background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%); box-shadow: 0 4px 15px rgba(231,76,60,0.3); }
+  .report-tile-title { font-size: 0.875rem; opacity: 0.9; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px; }
+  .report-tile-value { font-size: 2rem; font-weight: 700; }
+  .report-table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+  .report-table thead { background: #2d3e50; color: white; }
+  .report-table th { padding: 0.75rem 1rem; text-align: left; font-weight: 600; font-size: 0.875rem; }
+  .report-table td { padding: 0.75rem 1rem; border-bottom: 1px solid #eee; }
+  .chart-container { background: white; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; border: 1px solid #eee; overflow: hidden; }
+  .chart-title { font-size: 1rem; font-weight: 600; color: #2d3e50; margin-bottom: 1rem; }
+  .page-number { text-align: center; font-size: 0.75rem; color: #999; padding-top: 1.5rem; margin-top: auto; border-top: 1px solid #eee; }
+  .row { display: flex !important; flex-wrap: wrap !important; margin-right: -0.75rem; margin-left: -0.75rem; }
+  .col-1,  .col-sm-1,  .col-md-1,  .col-lg-1,  .col-xl-1  { flex-shrink: 0; width: 8.3333%   !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-2,  .col-sm-2,  .col-md-2,  .col-lg-2,  .col-xl-2  { flex-shrink: 0; width: 16.6667%  !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-3,  .col-sm-3,  .col-md-3,  .col-lg-3,  .col-xl-3  { flex-shrink: 0; width: 25%       !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-4,  .col-sm-4,  .col-md-4,  .col-lg-4,  .col-xl-4  { flex-shrink: 0; width: 33.3333%  !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-5,  .col-sm-5,  .col-md-5,  .col-lg-5,  .col-xl-5  { flex-shrink: 0; width: 41.6667%  !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-6,  .col-sm-6,  .col-md-6,  .col-lg-6,  .col-xl-6  { flex-shrink: 0; width: 50%       !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-7,  .col-sm-7,  .col-md-7,  .col-lg-7,  .col-xl-7  { flex-shrink: 0; width: 58.3333%  !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-8,  .col-sm-8,  .col-md-8,  .col-lg-8,  .col-xl-8  { flex-shrink: 0; width: 66.6667%  !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-9,  .col-sm-9,  .col-md-9,  .col-lg-9,  .col-xl-9  { flex-shrink: 0; width: 75%       !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-10, .col-sm-10, .col-md-10, .col-lg-10, .col-xl-10 { flex-shrink: 0; width: 83.3333%  !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-11, .col-sm-11, .col-md-11, .col-lg-11, .col-xl-11 { flex-shrink: 0; width: 91.6667%  !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-12, .col-sm-12, .col-md-12, .col-lg-12, .col-xl-12 { flex-shrink: 0; width: 100%      !important; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col { flex: 1 0 0% !important; }
+  .d-flex { display: flex !important; }
+  .gap-1 { gap: 0.25rem !important; }
+  .gap-2 { gap: 0.5rem  !important; }
+  .gap-3 { gap: 1rem    !important; }
+  .gap-4 { gap: 1.5rem  !important; }
+  .g-1 > *, .gx-1 > * { padding-right: 0.25rem !important; padding-left: 0.25rem !important; }
+  .g-2 > *, .gx-2 > * { padding-right: 0.5rem  !important; padding-left: 0.5rem  !important; }
+  .g-3 > *, .gx-3 > * { padding-right: 0.75rem !important; padding-left: 0.75rem !important; }
+  .g-4 > *, .gx-4 > * { padding-right: 1rem    !important; padding-left: 1rem    !important; }
+  .report-columns-2 { column-count: 2; column-gap: 2rem; }
+  .report-columns-3 { column-count: 3; column-gap: 1.5rem; }
+  .report-columns-4 { column-count: 4; column-gap: 1rem; }
+  .report-grid-2   { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+  .report-grid-3   { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .report-grid-4   { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+  .report-grid-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 1rem; }
+  .report-grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+  .report-grid-1-3 { display: grid; grid-template-columns: 1fr 3fr; gap: 1rem; }
+  .report-grid-3-1 { display: grid; grid-template-columns: 3fr 1fr; gap: 1rem; }
+  .report-global-header { border-bottom: 2px solid #2d3e50; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+  .report-global-footer { border-top: 1px solid #dee2e6; padding-top: 0.75rem; margin-top: 1.5rem; font-size: 0.8rem; color: #6c757d; }
+"""
+
+
+def build_email_html_document(body: str, title: str, is_markdown: bool = False) -> str:
+    """
+    Build a complete HTML document with all CSS inlined as style="" attributes,
+    suitable for sending as an HTML email body.
+
+    Differences from build_html_document():
+    - No Bootstrap CDN link — full Bootstrap CSS is embedded from vendor/bootstrap.min.css
+      so all Bootstrap utility classes work without an external request
+    - _EMAIL_STYLES appended after Bootstrap so custom report classes take precedence
+    - All styles are inlined via css-inline so they survive email client <head> stripping
+    """
+    extra_styles = _MARKDOWN_STYLES if is_markdown else ""
+    html = (
+        f'<!DOCTYPE html><html><head>\n'
+        f'<meta charset="utf-8">\n'
+        f'<title>{title}</title>\n'
+        f'<style>{_bootstrap_css()}{_EMAIL_STYLES}{extra_styles}</style>\n'
+        f'</head><body>{body}</body></html>'
+    )
+    try:
+        import css_inline
+        inliner = css_inline.CSSInliner(keep_style_tags=False, load_remote_stylesheets=False)
+        return inliner.inline(html)
+    except Exception as exc:
+        L.warning(f"[ReportRenderer] CSS inlining failed, sending without inlined styles: {exc}")
+        return html
+
+
 async def render_report(template_id: UUID) -> tuple[str, Template]:
     """
     Render a report template server-side using the app's service principal.
@@ -490,24 +602,3 @@ async def render_report(template_id: UUID) -> tuple[str, Template]:
     return rendered, template
 
 
-async def render_report_pdf(template_id: UUID) -> tuple[bytes, Template]:
-    """
-    Render a report template to PDF bytes using WeasyPrint.
-
-    Wraps the rendered body in a full HTML document (Bootstrap + styles)
-    before passing to WeasyPrint so that all styles are applied.
-    Returns a (pdf_bytes, template) tuple.
-    """
-    import weasyprint  # lazy — requires system libs (pango/cairo); not needed at import time
-
-    body, template = await render_report(template_id)
-    body = await inline_images(body)
-    body = render_charts_as_svg(body)
-    is_markdown = template.template_type == "markdown"
-    full_html = build_html_document(body, template.name, is_markdown=is_markdown)
-    try:
-        pdf_bytes = weasyprint.HTML(string=full_html).write_pdf()
-    except Exception as e:
-        raise RuntimeError(f"Failed to convert template {template_id} to PDF: {e}") from e
-
-    return pdf_bytes, template

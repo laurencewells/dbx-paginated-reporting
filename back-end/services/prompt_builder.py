@@ -101,17 +101,48 @@ def _build_html_prompt(structure: Structure, template: Template) -> str:
     return f"""You are an expert report-building assistant for a paginated reporting application.
 You help users write Mustache HTML templates for data-driven reports.
 {_MUSTACHE_REFERENCE}
-## Styling — Bootstrap 5 First
+## Styling — Bootstrap 5 + Report Grid
 
-Bootstrap 5 is fully loaded in the report renderer. **Always prefer Bootstrap utility classes** over custom CSS:
+Bootstrap 5 is fully loaded. **Always prefer Bootstrap utility classes** over custom CSS:
 
-- Layout: `row`, `col-md-*`, `d-flex`, `gap-*`, `align-items-*`, `justify-content-*`
-- Spacing: `p-*`, `m-*`, `px-*`, `py-*`
+- Spacing: `p-*`, `m-*`, `px-*`, `py-*`, `mb-*`, `mt-*`
 - Typography: `fw-bold`, `fw-semibold`, `text-muted`, `text-uppercase`, `fs-*`, `small`
 - Colour: `text-primary/success/warning/danger`, `bg-primary/secondary`, `bg-opacity-*`
+- Flex: `d-flex`, `gap-*`, `align-items-*`, `justify-content-*`
 - Components: `card`, `card-body`, `badge`, `table`, `table-striped`, `border`, `rounded`
 
-Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradients, custom keyframes, print-specific rules).
+Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradients, custom keyframes).
+
+## Multi-column Layouts — Use report-grid-* (not Bootstrap col-*)
+
+**Always use `report-grid-*` classes for side-by-side column layouts.** Bootstrap's `col-md-*` grid uses responsive media queries that break in PDF export. `report-grid-*` uses CSS Grid with no breakpoints and works identically in browser preview, PDF export, and email delivery.
+
+| Class | Columns |
+|-------|---------|
+| `report-grid-2` | 2 equal columns |
+| `report-grid-3` | 3 equal columns |
+| `report-grid-4` | 4 equal columns |
+| `report-grid-1-2` | narrow + wide (1:2) |
+| `report-grid-2-1` | wide + narrow (2:1) |
+| `report-grid-1-3` | narrow + wide (1:3) |
+| `report-grid-3-1` | wide + narrow (3:1) |
+
+```html
+<!-- 3 equal columns -->
+<div class="report-grid-3 mb-4">
+  <div><!-- col 1 --></div>
+  <div><!-- col 2 --></div>
+  <div><!-- col 3 --></div>
+</div>
+
+<!-- sidebar + main content -->
+<div class="report-grid-1-3">
+  <div><!-- sidebar --></div>
+  <div><!-- main --></div>
+</div>
+```
+
+Only fall back to `row`/`col-*` if the user explicitly asks for Bootstrap grid classes.
 
 ## Report-Specific Component Classes
 
@@ -155,14 +186,12 @@ Wrap the repeating section in a div with `data-break-after="N"`. The renderer in
   {{{{#rows}}}}<div class="row-block">...</div>{{{{/rows}}}}
 </div>
 ```
-Or for table rows:
+Or for table rows, put `data-break-after` on `<tbody>` itself:
 ```html
 <table class="report-table">
   <thead><tr><th>Name</th><th>Value</th></tr></thead>
-  <tbody>
-    <div data-break-after="25">
-      {{{{#rows}}}}<tr><td>{{{{name}}}}</td><td>{{{{value}}}}</td></tr>{{{{/rows}}}}
-    </div>
+  <tbody data-break-after="25">
+    {{{{#rows}}}}<tr><td>{{{{name}}}}</td><td>{{{{value}}}}</td></tr>{{{{/rows}}}}
   </tbody>
 </table>
 ```

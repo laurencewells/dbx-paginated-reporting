@@ -44,12 +44,12 @@ export function parseChartData(el: Element): { labels: string[]; values: number[
 
   if (title) opts.title = title
   if (colorScheme) opts.colorScheme = colorScheme
-  if (width) opts.width = parseInt(width, 10)
-  if (height) opts.height = parseInt(height, 10)
+  if (width) { const v = parseInt(width, 10); if (Number.isFinite(v) && v > 0) opts.width = v }
+  if (height) { const v = parseInt(height, 10); if (Number.isFinite(v) && v > 0) opts.height = v }
   if (xTitle) opts.xTitle = xTitle
   if (yTitle) opts.yTitle = yTitle
   if (sort) opts.sort = sort
-  if (innerRadius) opts.innerRadius = parseInt(innerRadius, 10)
+  if (innerRadius) { const v = parseInt(innerRadius, 10); if (Number.isFinite(v) && v > 0) opts.innerRadius = v }
 
   return { labels: pairs.map(p => p.label), values: pairs.map(p => p.value), opts }
 }

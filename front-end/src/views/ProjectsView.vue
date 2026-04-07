@@ -16,10 +16,10 @@ import {
   useCreateShareApiV1ProjectsProjectIdSharesPost,
   useDeleteShareApiV1ProjectsProjectIdSharesShareIdDelete,
   getListSharesApiV1ProjectsProjectIdSharesGetQueryKey,
+  listProjectReportsApiV1ProjectsProjectIdReportsGet,
 } from '@/api/generated/projects/projects'
 import { useGetMe } from '@/api/generated/default/default'
 import { useQuery } from '@tanstack/vue-query'
-import { listProjectReportsApiV1ProjectsProjectIdReportsGet } from '@/api/generated/projects/projects'
 import { listSchedulesApiV1SchedulesGet } from '@/api/generated/schedules/schedules'
 import type { Project } from '@/api/generated'
 import CronDescription from '@/components/CronDescription.vue'

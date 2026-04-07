@@ -1,1 +1,0 @@
-import{s,t as o,K as y}from"./index-DU0mt87A.js";const c=e=>y({url:"/api/v1/me",method:"GET",signal:e}),q=()=>["api","v1","me"],i=e=>{const{query:n}={};return{queryKey:q(),queryFn:({signal:u})=>c(u),...n}};function a(e,n){const t=i(),r=s(t);return r.queryKey=o(t).queryKey,r}export{a as u};

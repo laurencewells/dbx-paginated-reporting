@@ -59,18 +59,41 @@ const REPORT_STYLES = `
   .report-columns-2 { column-count: 2; column-gap: 2rem; }
   .report-columns-3 { column-count: 3; column-gap: 1.5rem; }
   .report-columns-4 { column-count: 4; column-gap: 1rem; }
+  /* Report grid — media-query-free CSS Grid for reliable PDF output.
+     Prefer these over Bootstrap col-* in templates. Keep in sync with _REPORT_STYLES
+     in back-end/services/report_renderer.py. */
+  .report-grid-2   { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+  .report-grid-3   { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .report-grid-4   { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+  .report-grid-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 1rem; }
+  .report-grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+  .report-grid-1-3 { display: grid; grid-template-columns: 1fr 3fr; gap: 1rem; }
+  .report-grid-3-1 { display: grid; grid-template-columns: 3fr 1fr; gap: 1rem; }
   .report-global-header { border-bottom: 2px solid #2d3e50; padding-bottom: 1rem; margin-bottom: 1.5rem; }
   .report-global-footer { border-top: 1px solid #dee2e6; padding-top: 0.75rem; margin-top: 1.5rem; font-size: 0.8rem; color: #6c757d; }
-  @media print {
-    .row { display: flex !important; flex-wrap: wrap !important; }
-    [class*="col-"] { flex-shrink: 0; }
-    .col-3, .col-sm-3, .col-md-3, .col-lg-3 { width: 25% !important; }
-    .col-4, .col-sm-4, .col-md-4, .col-lg-4 { width: 33.3333% !important; }
-    .col-6, .col-sm-6, .col-md-6, .col-lg-6 { width: 50% !important; }
-    .col-12, .col-sm-12, .col-md-12, .col-lg-12 { width: 100% !important; }
-    .d-flex { display: flex !important; }
-    .gap-2 { gap: 0.5rem !important; }
-  }
+  /* Bootstrap grid overrides — applied unconditionally so print mode and screen both render
+     columns correctly without relying on @media breakpoints. Keep in sync with _REPORT_STYLES
+     in back-end/services/report_renderer.py. */
+  .row { display: flex !important; flex-wrap: wrap !important; margin-right: -0.75rem; margin-left: -0.75rem; }
+  [class*="col-"] { flex-shrink: 0; padding-right: 0.75rem; padding-left: 0.75rem; box-sizing: border-box; }
+  .col-1,  .col-sm-1,  .col-md-1,  .col-lg-1,  .col-xl-1,  .col-xxl-1  { width: 8.3333%  !important; }
+  .col-2,  .col-sm-2,  .col-md-2,  .col-lg-2,  .col-xl-2,  .col-xxl-2  { width: 16.6667% !important; }
+  .col-3,  .col-sm-3,  .col-md-3,  .col-lg-3,  .col-xl-3,  .col-xxl-3  { width: 25%      !important; }
+  .col-4,  .col-sm-4,  .col-md-4,  .col-lg-4,  .col-xl-4,  .col-xxl-4  { width: 33.3333% !important; }
+  .col-5,  .col-sm-5,  .col-md-5,  .col-lg-5,  .col-xl-5,  .col-xxl-5  { width: 41.6667% !important; }
+  .col-6,  .col-sm-6,  .col-md-6,  .col-lg-6,  .col-xl-6,  .col-xxl-6  { width: 50%      !important; }
+  .col-7,  .col-sm-7,  .col-md-7,  .col-lg-7,  .col-xl-7,  .col-xxl-7  { width: 58.3333% !important; }
+  .col-8,  .col-sm-8,  .col-md-8,  .col-lg-8,  .col-xl-8,  .col-xxl-8  { width: 66.6667% !important; }
+  .col-9,  .col-sm-9,  .col-md-9,  .col-lg-9,  .col-xl-9,  .col-xxl-9  { width: 75%      !important; }
+  .col-10, .col-sm-10, .col-md-10, .col-lg-10, .col-xl-10, .col-xxl-10 { width: 83.3333% !important; }
+  .col-11, .col-sm-11, .col-md-11, .col-lg-11, .col-xl-11, .col-xxl-11 { width: 91.6667% !important; }
+  .col-12, .col-sm-12, .col-md-12, .col-lg-12, .col-xl-12, .col-xxl-12 { width: 100%     !important; }
+  .col { flex: 1 0 0% !important; }
+  .d-flex { display: flex !important; }
+  .gap-1 { gap: 0.25rem !important; }
+  .gap-2 { gap: 0.5rem !important; }
+  .gap-3 { gap: 1rem !important; }
+  .gap-4 { gap: 1.5rem !important; }
 `
 
 
@@ -218,7 +241,7 @@ async function exportToPdf() {
                 style="width: 72px;"
                 v-model.number="previewLimit"
                 min="1"
-                max="10000"
+                max="1000"
                 @change="loadPreview"
               />
             </template>

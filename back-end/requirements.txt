@@ -12,5 +12,5 @@ aiocache==0.12.3
 altair[save]==6.0.0
 chevron==0.14.0
 markdown2==2.5.5
-weasyprint==68.1
 sendgrid==6.12.5
+css-inline==0.20.1
