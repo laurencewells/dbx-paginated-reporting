@@ -15,10 +15,20 @@ variables:
     default: "app_files"
   admin_emails:
     description: "Comma-separated list of admin user emails"
-    default: ""
+    default: "dev.user@databricks.com"
   secret_scope_name:
     description: "Name of the secret scope to use"
     default: "paginated_reports"
+  lakebase_endpoint:
+    description: >
+      Full Lakebase postgres endpoint resource path used to generate OAuth credentials,
+      e.g. 'projects/my-project/branches/main/endpoints/primary'.
+      Find this by running: databricks postgres endpoints list --parent projects/<project>/branches/main
+      If left empty the app will discover the endpoint via the SDK at startup.
+    default: ""
+  lakebase_database:
+    description: "Postgres database name to connect to (default: databricks_postgres)"
+    default: "databricks_postgres"
   app_config:
     type: complex
     description: "Configuration for paginated-reports"
@@ -47,6 +57,10 @@ variables:
           value: '${var.admin_emails}'
         - name: 'SMTP_SECRET_SCOPE'
           value: '${var.secret_scope_name}'
+        - name: 'LAKEBASE_ENDPOINT'
+          value: '${var.lakebase_endpoint}'
+        - name: 'PGDATABASE'
+          value: '${var.lakebase_database}'
 
 resources:
   apps:
@@ -66,12 +80,6 @@ resources:
           sql_warehouse:
             id: ${resources.sql_warehouses.paginated_reports_sql_warehouse.id}
             permission: "CAN_USE"
-        - name: "database"
-          description: "A database for the app to be able to connect to and query"
-          database:
-            database_name: ${resources.database_catalogs.paginated_reports_db_catalog.database_name}
-            instance_name: ${resources.database_catalogs.paginated_reports_db_catalog.database_instance_name}
-            permission: "CAN_CONNECT_AND_CREATE"
       permissions:
         - user_name: "*"
           level: "CAN_USE"
@@ -82,18 +90,17 @@ resources:
       # After first deploy, run this once to grant the app access:
       #   databricks s put-acl paginated_reports_smtp_secrets <app-service-principal> MANAGE
       # The app service principal name is visible in the App settings page in the Databricks UI.
-
-  database_instances:
-    paginated_reports_db_instance:
-      name: paginated-reports-db-instance
-      capacity: CU_1
-  database_catalogs:
-    paginated_reports_db_catalog:
-      database_instance_name: ${resources.database_instances.paginated_reports_db_instance.name}
-      database_name: "paginated_reports_database"
-      name: paginated_reports_database_catalog
-      create_database_if_not_exists: true
-
+  postgres_projects:
+    paginated_reports:
+      project_id: paginated-reports-project
+      display_name: 'Paginated Reports'
+      pg_version: 17
+  postgres_branches:
+    main:
+      parent: ${resources.postgres_projects.paginated_reports.id}
+      branch_id: main
+      is_protected: false
+      no_expiry: true
   sql_warehouses:
     paginated_reports_sql_warehouse:
       name: paginated-reports-warehouse
@@ -117,9 +124,12 @@ targets:
       schema_name: "paginated_dev"
       volume_name: "paginated_files_dev"
       secret_scope_name: "paginated_reports_dev"
+      # Find with: databricks postgres endpoints list --parent projects/paginated-reports-project/branches/main
+      lakebase_endpoint: "projects/paginated-reports-project/branches/main/endpoints/primary"
   prod:
     variables:
       catalog_name: "reporting_data_prod"
       schema_name: "paginated_prod"
       volume_name: "app_files_prod"
       secret_scope_name: "paginated_reports_prod"
+      lakebase_endpoint: "projects/paginated-reports-project/branches/main/endpoints/primary"

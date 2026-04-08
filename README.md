@@ -457,8 +457,11 @@ ENV=DEV                           # Enables CORS and dev user fallback for local
 DATABRICKS_HOST=                  # Workspace URL
 DATABRICKS_TOKEN=                 # PAT (or use DATABRICKS_CLIENT_ID/SECRET)
 DATABRICKS_WAREHOUSE_ID=          # SQL Warehouse for data queries
-LAKEBASE_INSTANCE_NAME=           # Lakebase PostgreSQL instance (or use PGHOST)
-LAKEBASE_DATABASE_NAME=           # Database name (or use PGDATABASE)
+LAKEBASE_ENDPOINT=                # Full endpoint resource path — see Lakebase setup below
+PGDATABASE=databricks_postgres    # Postgres database name
+PGUSER=                           # Service principal client ID (DB username)
+PGPORT=5432
+PGSSLMODE=require
 LAKEBASE_SCHEMA=app               # Schema name (default: app)
 MODEL_SERVING_ENDPOINT=           # Defaults to databricks-claude-sonnet-4-6
 LAKEHOUSE_CATALOG_NAME=           # Unity Catalog catalog for data discovery
@@ -466,6 +469,76 @@ LAKEHOUSE_SCHEMA_NAME=            # Unity Catalog schema for data discovery
 ADMIN_EMAILS=                     # Comma-separated list of admin user emails (can manage SMTP connections)
 SMTP_SECRET_SCOPE=paginated-reports-smtp  # Databricks Secret scope for SMTP passwords (default shown)
 ```
+
+## Lakebase Autoscaling Postgres Setup
+
+The app uses **Databricks Lakebase Autoscaling Postgres** (the new `w.postgres` SDK) for persistent storage. The DABs postgres app resource is intentionally bypassed — it requires an opaque auto-generated database ID (`db-8uv1-...`) that cannot be predicted at bundle authoring time. Instead, connection details are passed as explicit env vars.
+
+### 1. Deploy the DABs resources
+
+```bash
+databricks bundle deploy --target dev
+```
+
+This creates the Lakebase project (`paginated-reports-project`), branch (`main`), SQL warehouse, catalog, and schema. It does **not** create a Postgres role for the app's service principal — that is done in step 3.
+
+### 2. Find the endpoint resource path
+
+```bash
+databricks postgres endpoints list --parent projects/paginated-reports-project/branches/main
+```
+
+Copy the `name` field (e.g. `projects/paginated-reports-project/branches/main/endpoints/primary`) and set it as `lakebase_endpoint` in the relevant target in `databricks.yml`.
+
+### 3. Create the Postgres role for the app service principal
+
+Because the postgres app resource is bypassed, DABs cannot auto-create a Postgres role for the app's SP. Run this **once** as the project owner (in a Databricks notebook) before the app first connects:
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.postgres import (
+    Role, RoleRoleSpec, RoleIdentityType, RoleAuthMethod
+)
+
+w = WorkspaceClient()
+
+APP_SP_CLIENT_ID = "<app-service-principal-client-id>"  # visible in App settings page
+BRANCH = "projects/paginated-reports-project/branches/main"
+
+w.postgres.create_role(
+    parent=BRANCH,
+    role=Role(spec=RoleRoleSpec(
+        identity_type=RoleIdentityType.SERVICE_PRINCIPAL,
+        auth_method=RoleAuthMethod.LAKEBASE_OAUTH_V1,
+        postgres_role=APP_SP_CLIENT_ID,
+    )),
+    role_id=APP_SP_CLIENT_ID,
+).wait()
+print("Role created")
+```
+
+Then grant database access (connect as your owner identity via psql or a notebook):
+
+```sql
+GRANT ALL ON DATABASE databricks_postgres TO "<app-service-principal-client-id>";
+GRANT ALL ON SCHEMA app TO "<app-service-principal-client-id>";
+```
+
+### 4. Deploy the app
+
+```bash
+databricks bundle deploy --target dev   # picks up the lakebase_endpoint variable
+```
+
+On startup the app will:
+1. Call `w.postgres.get_endpoint(name=LAKEBASE_ENDPOINT)` to resolve the DNS hostname from `endpoint.status.hosts.host`
+2. Generate an initial OAuth token via `w.postgres.generate_database_credential(endpoint=...)`
+3. Run database migrations
+4. Start a background task that refreshes the token before it expires (tokens last 1 hour; refresh is scheduled using the `expire_time` returned by the API)
+
+### How authentication works
+
+OAuth tokens are generated per-connection using the app's service principal credentials — no long-lived passwords are stored. The `LakebaseAuthentication` class in `common/authentication/lakebase.py` manages token lifecycle. The SQLAlchemy `do_connect` event injects the current token as the Postgres password on every new connection.
 
 ## License
 
