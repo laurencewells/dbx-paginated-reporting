@@ -1,4 +1,4 @@
-databricks-sdk==0.88.0
+databricks-sdk==0.102.0
 databricks-sql-connector[pyarrow]==4.2.5
 fastapi[standard]==0.115.12
 fastapi-cli==0.0.7

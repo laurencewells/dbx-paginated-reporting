@@ -36,16 +36,31 @@ def get_static_files_directory() -> str:
 def get_lakebase_config() -> Dict[str, Any]:
     """
     Get Lakebase PostgreSQL configuration from environment variables.
-    
-    Uses Databricks workspace API for managed Lakebase instances:
-    - LAKEBASE_* variables for Databricks-specific configuration
-    
+
+    The preferred deployment pattern bypasses the DABs postgres resource entirely
+    (to avoid the opaque auto-generated database ID dependency) and instead injects
+    connection details as explicit env vars:
+
+        LAKEBASE_ENDPOINT  - full endpoint resource path, e.g.
+                             'projects/my-project/branches/main/endpoints/primary'
+        PGDATABASE         - database name (e.g. 'databricks_postgres')
+        PGUSER             - service-principal client ID used as the DB username
+        PGPORT             - port (default 5432)
+        PGSSLMODE          - SSL mode (default 'require')
+
+    The host is NOT read from env vars — it is resolved at startup by calling
+    w.postgres.get_endpoint(name=LAKEBASE_ENDPOINT) so it is always consistent
+    with the live endpoint object.
+
     Returns:
-        dict: Lakebase configuration with default values
+        dict: Lakebase configuration with default values.
     """
     return {
-                
-        "instance_name": os.getenv("PGHOST") or os.getenv("LAKEBASE_INSTANCE_NAME"),
+        # Project / instance name — prefer the explicit var; PGHOST is a legacy fallback
+        # for local dev only (it won't be present in production since the postgres app
+        # resource is bypassed).
+        "instance_name": os.getenv("LAKEBASE_INSTANCE_NAME") or os.getenv("PGHOST"),
+        "endpoint": os.getenv("LAKEBASE_ENDPOINT"),
         "database_name": os.getenv("PGDATABASE") or os.getenv("LAKEBASE_DATABASE_NAME"),
         "schema_name": os.getenv("LAKEBASE_SCHEMA", "app"),
         "catalog_name": os.getenv("LAKEBASE_CATALOG_NAME"),
@@ -66,21 +81,24 @@ def get_lakebase_config() -> Dict[str, Any]:
 def is_lakebase_configured() -> bool:
     """
     Check if Lakebase is properly configured for workspace API access.
-    
+
+    The minimum requirement is LAKEBASE_ENDPOINT (preferred) or LAKEBASE_INSTANCE_NAME
+    so the authenticator can resolve the endpoint and generate credentials.
+
     Returns:
-        bool: True if required Databricks Lakebase configuration variables are set.
+        bool: True if the minimum required configuration is present.
     """
     config = get_lakebase_config()
-    
-    # Check if we have Databricks Lakebase configuration
-    has_databricks_vars = bool(config.get("instance_name"))
-    
-    if has_databricks_vars:
-        L.info("Databricks Lakebase configuration detected - workspace API mode")
+
+    if config.get("endpoint"):
+        L.info("Lakebase configuration detected — using LAKEBASE_ENDPOINT")
         return True
-    else:
-        L.warning("Databricks Lakebase configuration (LAKEBASE_INSTANCE_NAME) not found")
-        return False
+    if config.get("instance_name"):
+        L.info("Lakebase configuration detected — using LAKEBASE_INSTANCE_NAME (endpoint will be discovered)")
+        return True
+
+    L.warning("Lakebase not configured: set LAKEBASE_ENDPOINT or LAKEBASE_INSTANCE_NAME")
+    return False
 
 def get_sql_warehouse_path() -> str:
     """Get SQL warehouse HTTP path from available environment variables."""
