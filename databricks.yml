@@ -22,8 +22,8 @@ variables:
   lakebase_endpoint:
     description: >
       Full Lakebase postgres endpoint resource path used to generate OAuth credentials,
-      e.g. 'projects/my-project/branches/main/endpoints/primary'.
-      Find this by running: databricks postgres endpoints list --parent projects/<project>/branches/main
+      e.g. 'projects/my-project/branches/production/endpoints/primary'.
+      Find this by running: databricks postgres endpoints list --parent projects/<project>/branches/production
       If left empty the app will discover the endpoint via the SDK at startup.
     default: ""
   lakebase_database:
@@ -95,12 +95,6 @@ resources:
       project_id: paginated-reports-project
       display_name: 'Paginated Reports'
       pg_version: 17
-  postgres_branches:
-    main:
-      parent: ${resources.postgres_projects.paginated_reports.id}
-      branch_id: main
-      is_protected: false
-      no_expiry: true
   sql_warehouses:
     paginated_reports_sql_warehouse:
       name: paginated-reports-warehouse
