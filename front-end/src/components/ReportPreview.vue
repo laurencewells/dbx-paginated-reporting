@@ -52,7 +52,10 @@ watchEffect(() => {
   const re = /<style[^>]*>([\s\S]*?)<\/style>/gi
   let m: RegExpExecArray | null
   while ((m = re.exec(props.html)) !== null) blocks.push(m[1])
-  headStyleEl.textContent = sanitizeCss(blocks.join('\n'))
+  const css = sanitizeCss(blocks.join('\n'))
+  // @scope limits the injected rules to inside .report-preview-wrapper so
+  // template styles (e.g. html { font-size: 10px }) don't bleed into the app UI.
+  headStyleEl.textContent = css ? `@scope (.report-preview-wrapper) {\n${css}\n}` : ''
 })
 
 const previewContainer = ref<HTMLElement | null>(null)

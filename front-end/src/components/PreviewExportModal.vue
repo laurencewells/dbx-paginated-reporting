@@ -13,6 +13,7 @@ const props = defineProps<{
   templateName: string | null
   htmlContent: string
   templateType?: 'html' | 'markdown'
+  pageSize?: 'A4' | 'email'
   structureName?: string | null
 }>()
 
@@ -211,6 +212,23 @@ async function exportToPdf() {
     exporting.value = false
   }
 }
+
+async function downloadHtml() {
+  if (!props.templateId) return
+  exporting.value = true
+  try {
+    const a = document.createElement('a')
+    a.href = `/api/v1/templates/${props.templateId}/render`
+    a.download = `${props.templateName ?? 'report'}.html`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  } catch {
+    toastStore.error('Failed to download HTML')
+  } finally {
+    exporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -246,6 +264,7 @@ async function exportToPdf() {
               />
             </template>
             <button
+              v-if="pageSize !== 'email'"
               class="btn btn-danger btn-sm"
               @click="exportToPdf"
               :disabled="!templateId || exporting || loadingData"
@@ -253,6 +272,16 @@ async function exportToPdf() {
               <span v-if="exporting" class="spinner-border spinner-border-sm me-1" role="status"></span>
               <i v-else class="bi bi-file-earmark-pdf me-1"></i>
               {{ exporting ? 'Generating…' : 'Export PDF' }}
+            </button>
+            <button
+              v-else
+              class="btn btn-outline-secondary btn-sm"
+              @click="downloadHtml"
+              :disabled="!templateId || exporting || loadingData"
+            >
+              <span v-if="exporting" class="spinner-border spinner-border-sm me-1" role="status"></span>
+              <i v-else class="bi bi-file-earmark-code me-1"></i>
+              {{ exporting ? 'Downloading…' : 'Download HTML' }}
             </button>
             <button class="btn btn-outline-secondary btn-sm" @click="emit('update:show', false)" title="Close">
               <i class="bi bi-x-lg"></i>

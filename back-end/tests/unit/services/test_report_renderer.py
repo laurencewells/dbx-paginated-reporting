@@ -5,16 +5,131 @@ All external dependencies (repos, DataQueryService, chevron) are mocked.
 """
 from __future__ import annotations
 
+import base64
+import importlib.util
+import re as _re
+import struct
 import uuid
+import zlib
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+_XHTML2PDF_AVAILABLE = importlib.util.find_spec("xhtml2pdf") is not None
+requires_xhtml2pdf = pytest.mark.skipif(
+    not _XHTML2PDF_AVAILABLE,
+    reason="xhtml2pdf not installed (reportlab<4 fails to build on Python 3.13+)",
+)
 
 from models.structure import Structure, StructureTable
 from models.template import Template
 
 NOW = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+# ---------------------------------------------------------------------------
+# Shared helpers — PNG factory and template fixtures
+# ---------------------------------------------------------------------------
+
+_PROJECT_ROOT = Path(__file__).parents[4]
+_LOGO_UUID = "4a8af897-cd59-4e3e-9d92-24acaaa9d755"
+
+
+def _make_1x1_png() -> bytes:
+    """Build a minimal valid 1×1 white-pixel PNG without PIL."""
+    def _chunk(name: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(name + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + name + data + struct.pack(">I", crc)
+
+    return (
+        b'\x89PNG\r\n\x1a\n'
+        + _chunk(b'IHDR', struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + _chunk(b'IDAT', zlib.compress(b'\x00\xff\xff\xff'))
+        + _chunk(b'IEND', b'')
+    )
+
+
+# Supplier template (body-only — already ready to use directly)
+_SUPPLIER_BODY = (_PROJECT_ROOT / "examples" / "template.html").read_text()
+
+# KPI template — lives in example_Testing/ which is gitignored; skip KPI tests on clean checkouts.
+_KPI_TEMPLATE_PATH = _PROJECT_ROOT / "example_Testing" / "kpi_report_template.html"
+_kpi_template_available = _KPI_TEMPLATE_PATH.exists()
+requires_kpi_template = pytest.mark.skipif(
+    not _kpi_template_available,
+    reason="example_Testing/kpi_report_template.html not present (gitignored — provide locally to run KPI tests)",
+)
+if _kpi_template_available:
+    _kpi_html_full = _KPI_TEMPLATE_PATH.read_text()
+    _kpi_body_m = _re.search(r'<body[^>]*>(.*?)</body>', _kpi_html_full, _re.DOTALL | _re.IGNORECASE)
+    _KPI_BODY = _kpi_body_m.group(1).strip() if _kpi_body_m else _kpi_html_full
+else:
+    _KPI_BODY = ""
+
+# Dummy rows matching the KPI template's Mustache variables
+_KPI_ROWS = [
+    {   # Section-header row: Metric is empty so {{^Metric}} renders it as a group heading
+        "Section": "REVENUE", "Metric": "",
+        "MaxReportedDate": "2024-01-31",
+        "YDA": "", "MTD": "", "MTD_Budget": "", "PMTD": "", "LYMTD": "",
+        "YTD": "", "YTD_Budget": "", "LYTD": "",
+        "YDA_color_class": "", "MTD_color_arrow": "", "MTD_color_class": "", "MTD_arrow": "",
+        "vs_PMTD_color_class": "", "MTD_vs_PMTD": "",
+        "vs_LYMTD_color_class": "", "MTD_vs_LYMTD": "",
+        "YTD_color_class": "", "vs_LYTD_color_class": "", "YTD_vs_LYTD": "",
+    },
+    {   # Data row: Metric is set so {{#Metric}} renders the numbers
+        "Section": "", "Metric": "Net Revenue",
+        "MaxReportedDate": "2024-01-31",
+        "YDA": "€850K", "MTD": "€720K", "MTD_Budget": "€700K", "PMTD": "€680K",
+        "LYMTD": "€650K", "YTD": "€8.5M", "YTD_Budget": "€8.4M", "LYTD": "€8.1M",
+        "YDA_color_class": "var-positive", "MTD_color_arrow": "var-positive",
+        "MTD_color_class": "var-positive", "MTD_arrow": "↑",
+        "vs_PMTD_color_class": "var-positive", "MTD_vs_PMTD": "+5.9%",
+        "vs_LYMTD_color_class": "var-positive", "MTD_vs_LYMTD": "+10.8%",
+        "YTD_color_class": "var-positive", "vs_LYTD_color_class": "var-positive",
+        "YTD_vs_LYTD": "+4.9%",
+    },
+]
+
+# Full Mustache context as produced by DataQueryService._map_results_to_data
+_KPI_CONTEXT = {
+    "rows": [dict(row, _index=i + 1, _total=len(_KPI_ROWS), _even=(i % 2 == 1))
+             for i, row in enumerate(_KPI_ROWS)],
+    "_first": {k: v for k, v in _KPI_ROWS[0].items() if k not in ("_index", "_total", "_even")},
+}
+
+# Dummy rows matching the supplier template's Mustache variables
+_SUPPLIER_ROWS = [
+    {
+        "_index": 1, "_total": 2,
+        "supplier_name": "ACME Corp",
+        "supplierID": "S001",
+        "supplier_continent": "Europe",
+        "supplier_city": "London",
+        "total_transactions": 1250,
+        "total_sales_amount": 487500,
+        "top_5_customers": [
+            {"customer_name": "Widget Co", "transactions": 200, "amount": 85000},
+            {"customer_name": "Gadget Inc", "transactions": 180, "amount": 72000},
+        ],
+        "top_3_products": [
+            {"product": "Widget A", "transactions": 400, "amount": 160000},
+        ],
+    },
+    {
+        "_index": 2, "_total": 2,
+        "supplier_name": "Global Trade Ltd",
+        "supplierID": "S002",
+        "supplier_continent": "Asia",
+        "supplier_city": "Tokyo",
+        "total_transactions": 980,
+        "total_sales_amount": 392000,
+        "top_5_customers": [],
+        "top_3_products": [],
+    },
+]
 TID = uuid.uuid4()
 SID = uuid.uuid4()
 PID = uuid.uuid4()
@@ -334,9 +449,341 @@ class TestRenderChartsAsSvg:
 
 
 # ---------------------------------------------------------------------------
-# render_report_pdf
+# render_charts_for_pdf
 # ---------------------------------------------------------------------------
 
+
+class TestRenderChartsForPdf:
+    def test_bar_chart_replaced_with_png_img_tag(self):
+        from services.report_renderer import render_charts_for_pdf
+
+        html = '<div class="report-bar-chart" data-labels="[Jan,Feb]" data-values="[100,200]"></div>'
+        result = render_charts_for_pdf(html)
+        assert '<img ' in result
+        assert 'data:image/png;base64,' in result
+
+    def test_pie_chart_replaced_with_png_img_tag(self):
+        from services.report_renderer import render_charts_for_pdf
+
+        html = '<div class="report-pie-chart" data-labels="[A,B]" data-values="[60,40]"></div>'
+        result = render_charts_for_pdf(html)
+        assert '<img ' in result
+        assert 'data:image/png;base64,' in result
+
+    def test_missing_data_returns_div_unchanged(self):
+        from services.report_renderer import render_charts_for_pdf
+
+        html = '<div class="report-bar-chart"></div>'
+        assert render_charts_for_pdf(html) == html
+
+    def test_non_numeric_values_returns_div_unchanged(self):
+        from services.report_renderer import render_charts_for_pdf
+
+        html = '<div class="report-bar-chart" data-labels="[A,B]" data-values="[x,y]"></div>'
+        assert render_charts_for_pdf(html) == html
+
+    def test_vega_exception_returns_div_unchanged(self):
+        from services.report_renderer import render_charts_for_pdf
+        import services.report_renderer as rr
+
+        html = '<div class="report-bar-chart" data-labels="A,B" data-values="10,20"></div>'
+        with patch.object(rr, "vlc") as mock_vlc:
+            mock_vlc.vegalite_to_png.side_effect = RuntimeError("vega error")
+            result = render_charts_for_pdf(html)
+        assert result == html
+
+    def test_non_chart_html_unchanged(self):
+        from services.report_renderer import render_charts_for_pdf
+
+        html = '<div class="some-other-class"><p>Hello</p></div>'
+        assert render_charts_for_pdf(html) == html
+
+
+# ---------------------------------------------------------------------------
+# build_pdf_html_document
+# ---------------------------------------------------------------------------
+
+
+class TestBuildPdfHtmlDocument:
+    def test_returns_complete_html_document(self):
+        from services.report_renderer import build_pdf_html_document
+
+        result = build_pdf_html_document("<p>Body</p>", "My Report")
+        assert result.startswith("<!DOCTYPE html>")
+        assert "<p>Body</p>" in result
+
+    def test_title_embedded(self):
+        from services.report_renderer import build_pdf_html_document
+
+        result = build_pdf_html_document("", "KPI Dashboard")
+        assert "<title>KPI Dashboard</title>" in result
+
+    def test_no_bootstrap_cdn_link(self):
+        from services.report_renderer import build_pdf_html_document
+
+        result = build_pdf_html_document("", "T")
+        assert "cdn.jsdelivr.net" not in result
+
+    def test_uses_a4_page_size(self):
+        from services.report_renderer import build_pdf_html_document
+
+        result = build_pdf_html_document("", "T")
+        assert "A4" in result
+
+    def test_markdown_styles_included_when_flag_set(self):
+        from services.report_renderer import build_pdf_html_document
+
+        result = build_pdf_html_document("", "T", is_markdown=True)
+        assert "markdown-body" in result
+
+    def test_no_markdown_styles_by_default(self):
+        from services.report_renderer import build_pdf_html_document
+
+        result = build_pdf_html_document("", "T", is_markdown=False)
+        assert "markdown-body" not in result
+
+
+# ---------------------------------------------------------------------------
+# html_to_pdf_bytes
+# ---------------------------------------------------------------------------
+
+
+@requires_xhtml2pdf
+class TestHtmlToPdfBytes:
+    def test_simple_html_produces_valid_pdf(self):
+        from services.report_renderer import html_to_pdf_bytes, build_pdf_html_document
+
+        html = build_pdf_html_document("<h1>Test</h1><p>Hello world</p>", "Test")
+        pdf = html_to_pdf_bytes(html)
+        assert pdf.startswith(b'%PDF')
+        assert len(pdf) > 0
+
+    def test_image_data_uri_increases_pdf_size(self):
+        """xhtml2pdf must embed the image — PDF with a data: URI should be larger than without."""
+        from services.report_renderer import html_to_pdf_bytes, build_pdf_html_document
+
+        png_b64 = base64.b64encode(_make_1x1_png()).decode()
+
+        html_no_img = build_pdf_html_document("<p>No image</p>", "Test")
+        html_with_img = build_pdf_html_document(
+            f'<p>With image</p><img src="data:image/png;base64,{png_b64}" width="100" height="100" />',
+            "Test",
+        )
+
+        pdf_no_img = html_to_pdf_bytes(html_no_img)
+        pdf_with_img = html_to_pdf_bytes(html_with_img)
+
+        assert pdf_with_img.startswith(b'%PDF')
+        assert len(pdf_with_img) > len(pdf_no_img), (
+            "PDF with an embedded image should be larger than without one — "
+            "if this fails, xhtml2pdf is silently dropping data: URI images"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Full PDF pipeline — supplier template
+# ---------------------------------------------------------------------------
+
+
+class TestPdfPipelineSupplierTemplate:
+    def test_chart_divs_replaced_with_png_imgs_after_mustache(self):
+        import chevron
+        from services.report_renderer import render_charts_for_pdf
+
+        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+        result = render_charts_for_pdf(rendered)
+
+        assert 'report-bar-chart' not in result
+        assert 'data:image/png;base64,' in result
+
+    def test_supplier_names_present_in_rendered_body(self):
+        import chevron
+        from services.report_renderer import render_charts_for_pdf
+
+        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+        rendered = render_charts_for_pdf(rendered)
+
+        assert "ACME Corp" in rendered
+        assert "Global Trade Ltd" in rendered
+
+    @requires_xhtml2pdf
+    @pytest.mark.asyncio
+    async def test_full_pipeline_produces_valid_pdf(self):
+        import chevron
+        from services.report_renderer import (
+            html_to_pdf_bytes,
+            build_pdf_html_document,
+            inline_images,
+            render_charts_for_pdf,
+        )
+
+        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+        rendered = render_charts_for_pdf(rendered)
+        rendered = await inline_images(rendered)   # no img: refs in supplier template
+        html = build_pdf_html_document(rendered, "Supplier Summary Report")
+        pdf = html_to_pdf_bytes(html)
+
+        assert pdf.startswith(b'%PDF')
+        assert len(pdf) > 5_000  # non-trivial output
+
+    @pytest.mark.asyncio
+    async def test_nested_customer_and_product_rows_render(self):
+        import chevron
+        from services.report_renderer import render_charts_for_pdf
+
+        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+        rendered = render_charts_for_pdf(rendered)
+
+        assert "Widget Co" in rendered
+        assert "Widget A" in rendered
+
+    @pytest.mark.asyncio
+    async def test_empty_nested_arrays_render_fallback_message(self):
+        import chevron
+
+        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+
+        # Global Trade Ltd has empty top_5_customers and top_3_products
+        assert "No customer data available" in rendered
+        assert "No product data available" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Full PDF pipeline — KPI template
+# ---------------------------------------------------------------------------
+
+
+@requires_kpi_template
+class TestPdfPipelineKpiTemplate:
+    @requires_xhtml2pdf
+    @pytest.mark.asyncio
+    async def test_full_pipeline_produces_valid_pdf(self):
+        import chevron
+        from services.report_renderer import (
+            html_to_pdf_bytes,
+            build_pdf_html_document,
+            inline_images,
+            render_charts_for_pdf,
+        )
+
+        png_b64 = base64.b64encode(_make_1x1_png()).decode()
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=("image/png", png_b64))
+
+        rendered = chevron.render(_KPI_BODY, {"rows": _KPI_ROWS})
+        rendered = render_charts_for_pdf(rendered)
+        with patch("repositories.images.ImagesRepository", return_value=mock_repo):
+            rendered = await inline_images(rendered)
+        html = build_pdf_html_document(rendered, "KPI Report")
+        pdf = html_to_pdf_bytes(html)
+
+        assert pdf.startswith(b'%PDF')
+        assert len(pdf) > 1_000
+
+    @pytest.mark.asyncio
+    async def test_logo_image_inlined_as_data_uri(self):
+        import chevron
+        from services.report_renderer import inline_images, render_charts_for_pdf
+
+        png_b64 = base64.b64encode(_make_1x1_png()).decode()
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=("image/png", png_b64))
+
+        rendered = chevron.render(_KPI_BODY, {"rows": _KPI_ROWS})
+        rendered = render_charts_for_pdf(rendered)
+        with patch("repositories.images.ImagesRepository", return_value=mock_repo):
+            result = await inline_images(rendered)
+
+        assert f"img:{_LOGO_UUID}" not in result
+        assert "data:image/png;base64," in result
+
+    @requires_xhtml2pdf
+    @pytest.mark.asyncio
+    async def test_logo_image_survives_to_pdf(self):
+        """PDF with resolved image must be larger — fails if xhtml2pdf drops data: URIs."""
+        import chevron
+        from services.report_renderer import (
+            html_to_pdf_bytes,
+            build_pdf_html_document,
+            inline_images,
+            render_charts_for_pdf,
+        )
+
+        png_b64 = base64.b64encode(_make_1x1_png()).decode()
+        mock_found = MagicMock()
+        mock_found.get_data = AsyncMock(return_value=("image/png", png_b64))
+        mock_not_found = MagicMock()
+        mock_not_found.get_data = AsyncMock(return_value=None)
+
+        base_rendered = render_charts_for_pdf(chevron.render(_KPI_BODY, {"rows": _KPI_ROWS}))
+
+        with patch("repositories.images.ImagesRepository", return_value=mock_not_found):
+            body_no_img = await inline_images(base_rendered)
+        pdf_no_img = html_to_pdf_bytes(build_pdf_html_document(body_no_img, "KPI Report"))
+
+        with patch("repositories.images.ImagesRepository", return_value=mock_found):
+            body_with_img = await inline_images(base_rendered)
+        pdf_with_img = html_to_pdf_bytes(build_pdf_html_document(body_with_img, "KPI Report"))
+
+        assert pdf_with_img.startswith(b'%PDF')
+        assert len(pdf_with_img) > len(pdf_no_img), (
+            "PDF with logo should be larger than without — "
+            "xhtml2pdf may be silently dropping data: URI images"
+        )
+
+    @pytest.mark.asyncio
+    async def test_date_subtitle_rendered_from_row_data(self):
+        import chevron
+        from services.report_renderer import inline_images, render_charts_for_pdf
+
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=None)
+
+        rendered = chevron.render(_KPI_BODY, _KPI_CONTEXT)
+        rendered = render_charts_for_pdf(rendered)
+        with patch("repositories.images.ImagesRepository", return_value=mock_repo):
+            rendered = await inline_images(rendered)
+
+        assert "2024-01-31" in rendered
+
+    @pytest.mark.asyncio
+    async def test_date_subtitle_absent_when_field_missing(self):
+        import chevron
+        from services.report_renderer import inline_images, render_charts_for_pdf
+
+        rows_no_date = [
+            {k: v for k, v in row.items() if k != "MaxReportedDate"} for row in _KPI_ROWS
+        ]
+        context_no_date = {
+            "rows": rows_no_date,
+            "_first": {k: v for k, v in rows_no_date[0].items() if k not in ("_index", "_total")},
+        }
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=None)
+
+        rendered = chevron.render(_KPI_BODY, context_no_date)
+        rendered = render_charts_for_pdf(rendered)
+        with patch("repositories.images.ImagesRepository", return_value=mock_repo):
+            rendered = await inline_images(rendered)
+
+        assert "2024-01-31" not in rendered
+
+    def test_section_headers_render_without_metric_row(self):
+        import chevron
+
+        rendered = chevron.render(_KPI_BODY, {"rows": _KPI_ROWS})
+
+        assert "REVENUE" in rendered
+        assert "Net Revenue" in rendered
+
+    def test_kpi_values_present_in_rendered_body(self):
+        import chevron
+
+        rendered = chevron.render(_KPI_BODY, {"rows": _KPI_ROWS})
+
+        assert "€720K" in rendered   # MTD value
+        assert "€8.5M" in rendered   # YTD value
+        assert "+5.9%" in rendered   # variance
 
 
 # ---------------------------------------------------------------------------
@@ -726,5 +1173,70 @@ class TestInlineImages:
 
         with patch("repositories.images.ImagesRepository", return_value=mock_repo):
             await inline_images(html)
+
+        mock_repo.get_data.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# collect_images_for_email
+# ---------------------------------------------------------------------------
+
+
+class TestCollectImagesForEmail:
+    @pytest.mark.asyncio
+    async def test_no_op_when_no_img_uuids(self):
+        from services.report_renderer import collect_images_for_email
+
+        html = "<p>No images here</p>"
+        result_html, images = await collect_images_for_email(html)
+        assert result_html == html
+        assert images == {}
+
+    @pytest.mark.asyncio
+    async def test_rewrites_src_to_cid_reference(self):
+        import base64
+        from services.report_renderer import collect_images_for_email
+
+        uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        html = f'<img src="img:{uid}" alt="logo" />'
+        raw = b"\x89PNG"
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=("image/png", base64.b64encode(raw).decode()))
+
+        with patch("repositories.images.ImagesRepository", return_value=mock_repo):
+            result_html, images = await collect_images_for_email(html)
+
+        assert f'src="cid:{uid}@report"' in result_html
+        assert f"img:{uid}" not in result_html
+        assert uid in images
+        assert images[uid] == ("image/png", raw)
+
+    @pytest.mark.asyncio
+    async def test_leaves_src_unchanged_when_image_not_found(self):
+        from services.report_renderer import collect_images_for_email
+
+        uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        html = f'<img src="img:{uid}" alt="logo" />'
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=None)
+
+        with patch("repositories.images.ImagesRepository", return_value=mock_repo):
+            result_html, images = await collect_images_for_email(html)
+
+        assert f"img:{uid}" in result_html
+        assert images == {}
+
+    @pytest.mark.asyncio
+    async def test_deduplicated_uuids_fetched_once(self):
+        import base64
+        from services.report_renderer import collect_images_for_email
+
+        uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        html = f'<img src="img:{uid}" /><img src="img:{uid}" />'
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=("image/png", base64.b64encode(b"x").decode()))
+
+        with patch("repositories.images.ImagesRepository", return_value=mock_repo):
+            await collect_images_for_email(html)
 
         mock_repo.get_data.assert_awaited_once()

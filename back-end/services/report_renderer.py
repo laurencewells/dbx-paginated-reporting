@@ -7,6 +7,8 @@ No user bearer token is available in scheduled context — the app's service
 principal credentials (from environment) are used by SQLConnector by default.
 """
 
+import base64
+import io
 import re
 from pathlib import Path
 from uuid import UUID
@@ -94,6 +96,53 @@ _REPORT_STYLES = """
   /* Pagination magic — global header/footer (injected into every .report-page by the renderer) */
   .report-global-header { border-bottom: 2px solid #2d3e50; padding-bottom: 1rem; margin-bottom: 1.5rem; }
   .report-global-footer { border-top: 1px solid #dee2e6; padding-top: 0.75rem; margin-top: 1.5rem; font-size: 0.8rem; color: #6c757d; }
+"""
+
+# PDF styles for xhtml2pdf (CSS 2.1 only — no flexbox, grid, gradients or box-shadow).
+# Mirrors the essential parts of _REPORT_STYLES but restricted to what xhtml2pdf supports.
+_PDF_STYLES = """
+  @page { size: A4; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0; font-family: Helvetica, Arial, sans-serif; color: #212529; font-size: 12px; }
+  .report-page { page-break-after: always; padding: 16px 20px; }
+  .report-page:last-child { page-break-after: auto; }
+  h1, h2, h3, h4 { color: #2d3e50; margin-top: 1rem; margin-bottom: 0.5rem; }
+  h1 { font-size: 20px; font-weight: bold; }
+  h2 { font-size: 16px; font-weight: bold; }
+  h3 { font-size: 14px; font-weight: bold; }
+  p { margin-bottom: 0.75rem; }
+  .report-tile { background-color: #3498db; color: white; padding: 12px; margin-bottom: 12px; }
+  .report-tile.tile-primary { background-color: #2d3e50; }
+  .report-tile.tile-success { background-color: #27ae60; }
+  .report-tile.tile-warning { background-color: #f39c12; }
+  .report-tile.tile-danger  { background-color: #e74c3c; }
+  .report-tile-title { font-size: 10px; margin-bottom: 4px; text-transform: uppercase; }
+  .report-tile-value { font-size: 24px; font-weight: bold; }
+  .report-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  .report-table thead { background-color: #2d3e50; color: white; }
+  .report-table th { padding: 8px 10px; text-align: left; font-weight: bold; font-size: 11px; }
+  .report-table td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  thead { background-color: #2d3e50; color: white; }
+  th { padding: 8px 10px; text-align: left; font-weight: bold; font-size: 11px; }
+  td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+  .page-break { page-break-after: always; }
+  .page-break-before { page-break-before: always; }
+  .no-break { page-break-inside: avoid; }
+  .col-1  { width: 8.3333%;  }
+  .col-2  { width: 16.6667%; }
+  .col-3  { width: 25%;      }
+  .col-4  { width: 33.3333%; }
+  .col-5  { width: 41.6667%; }
+  .col-6  { width: 50%;      }
+  .col-7  { width: 58.3333%; }
+  .col-8  { width: 66.6667%; }
+  .col-9  { width: 75%;      }
+  .col-10 { width: 83.3333%; }
+  .col-11 { width: 91.6667%; }
+  .col-12 { width: 100%;     }
+  .report-global-header { border-bottom: 2px solid #2d3e50; padding-bottom: 0.75rem; margin-bottom: 1rem; }
+  .report-global-footer { border-top: 1px solid #dee2e6; padding-top: 0.5rem; margin-top: 1rem; font-size: 10px; color: #6c757d; }
 """
 
 # ---------------------------------------------------------------------------
@@ -400,26 +449,119 @@ def render_charts_as_svg(html: str) -> str:
     return _CHART_DIV_RE.sub(_replace, html)
 
 
+def render_charts_for_pdf(html: str) -> str:
+    """Replace .report-bar-chart/.report-pie-chart divs with PNG <img> tags for xhtml2pdf.
+
+    Uses vl_convert.vegalite_to_png() at 2× scale instead of SVG, because xhtml2pdf
+    has unreliable inline-SVG support but handles <img src="data:image/png;base64,..."> cleanly.
+    """
+    def _replace(m: re.Match) -> str:
+        before, cls, chart_type, after = m.group(1), m.group(2), m.group(3), m.group(4)
+        all_attrs = before + f' class="{cls}"' + after
+        lm = _DATA_LABELS_RE.search(all_attrs)
+        vm = _DATA_VALUES_RE.search(all_attrs)
+        if not lm or not vm:
+            return m.group(0)
+        raw_labels = lm.group(1).strip().lstrip('[').rstrip(']')
+        raw_values = vm.group(1).strip().lstrip('[').rstrip(']')
+        labels = [s.strip() for s in raw_labels.split(',') if s.strip()]
+        if not labels:
+            return m.group(0)
+        try:
+            values = [float(v.strip()) for v in raw_values.split(',') if v.strip()]
+        except ValueError:
+            return m.group(0)
+        opts = _parse_chart_opts(all_attrs)
+        try:
+            spec = _build_bar_spec(labels, values, opts) if chart_type == 'bar' else _build_pie_spec(labels, values, opts)
+            png_bytes = vlc.vegalite_to_png(spec, scale=2)
+            png_b64 = base64.b64encode(png_bytes).decode()
+            width = opts.get('width', '500' if chart_type == 'bar' else '300')
+            return f'<img src="data:image/png;base64,{png_b64}" width="{width}" />'
+        except Exception as exc:
+            L.warning(f"[ReportRenderer] PDF chart render failed ({chart_type}): {exc}")
+            return m.group(0)
+
+    return _CHART_DIV_RE.sub(_replace, html)
+
+
+_FULL_HTML_DOC_RE = re.compile(r'^\s*(?:<!DOCTYPE\b|<html\b)', re.IGNORECASE)
+
+
+def build_pdf_html_document(body: str, title: str, is_markdown: bool = False) -> str:
+    """Wrap a rendered report body in a complete HTML document for xhtml2pdf.
+
+    If body is already a full HTML document (has <!DOCTYPE or <html>), it is
+    passed through as-is so the template's own @page rules (e.g. landscape
+    orientation) are honoured by xhtml2pdf.  Wrapping it would bury the head
+    styles inside <body> where xhtml2pdf ignores them.
+
+    Fragment bodies get wrapped with _PDF_STYLES (CSS 2.1, no flexbox/grid).
+    """
+    if _FULL_HTML_DOC_RE.match(body):
+        return body
+
+    extra_styles = _MARKDOWN_STYLES if is_markdown else ""
+    return (
+        f'<!DOCTYPE html><html><head>\n'
+        f'<meta charset="utf-8">\n'
+        f'<title>{title}</title>\n'
+        f'<style>{_PDF_STYLES}{extra_styles}</style>\n'
+        f'</head><body>{body}</body></html>'
+    )
+
+
+def html_to_pdf_bytes(html: str) -> bytes:
+    """Convert an HTML string to PDF bytes using xhtml2pdf. Sync — wrap in asyncio.to_thread."""
+    from xhtml2pdf import pisa
+
+    buf = io.BytesIO()
+    result = pisa.pisaDocument(io.StringIO(html), buf, encoding="utf-8")
+    if result.err:
+        raise RuntimeError(f"PDF generation failed with {result.err} error(s)")
+    return buf.getvalue()
+
+
 _IMAGE_SRC_RE = re.compile(
     r'(src=["\'])(img:([0-9a-f-]{36}))(["\'])',
     re.IGNORECASE,
 )
 
 
-async def inline_images(html: str) -> str:
+def _svg_data_b64_to_png_data_b64(svg_b64: str) -> str:
+    """Rasterise a base64-encoded SVG to a base64-encoded PNG using vl-convert.
+
+    xhtml2pdf cannot process data:image/svg+xml URIs; PNG data URIs work fine.
+    Returns the original svg_b64 unchanged if rasterisation fails.
+    """
+    try:
+        svg_bytes = base64.b64decode(svg_b64)
+        png_bytes = vlc.svg_to_png(svg_bytes.decode("utf-8"))
+        return base64.b64encode(png_bytes).decode("ascii")
+    except Exception as e:
+        L.warning(f"[ReportRenderer] SVG→PNG rasterisation failed, keeping SVG: {e}")
+        return svg_b64
+
+
+async def inline_images(html: str, pdf_mode: bool = False) -> str:
     """
     Replace img:UUID src attributes (e.g. src="img:abc123...") with base64
     data URIs fetched directly from the database.
 
-    Safe to call for both HTML downloads and WeasyPrint — images that cannot
-    be resolved are left as-is rather than raising.
+    Pass pdf_mode=True when targeting xhtml2pdf: SVG images are rasterised to
+    PNG because xhtml2pdf cannot render data:image/svg+xml URIs.
+
+    Safe to call for both HTML downloads and PDF — images that cannot be
+    resolved are left as-is rather than raising.
     """
     from repositories.images import ImagesRepository
 
     uuids = {m.group(3) for m in _IMAGE_SRC_RE.finditer(html)}
     if not uuids:
+        L.debug("[ReportRenderer] inline_images: no img:UUID references found in HTML")
         return html
 
+    L.info(f"[ReportRenderer] inline_images: resolving {len(uuids)} image(s): {uuids}")
     repo = ImagesRepository()
     data_map: dict[str, str] = {}
     for uid in uuids:
@@ -427,15 +569,59 @@ async def inline_images(html: str) -> str:
             result = await repo.get_data(UUID(uid))
             if result:
                 mime_type, data_b64 = result
+                if pdf_mode and mime_type == "image/svg+xml":
+                    L.info(f"[ReportRenderer] Rasterising SVG image {uid} to PNG for PDF output")
+                    data_b64 = _svg_data_b64_to_png_data_b64(data_b64)
+                    mime_type = "image/png"
                 data_map[uid] = f"data:{mime_type};base64,{data_b64}"
-        except Exception:
-            L.warning(f"[ReportRenderer] Could not inline image {uid}")
+                L.info(f"[ReportRenderer] Resolved image {uid} ({mime_type}, {len(data_b64)} chars b64)")
+            else:
+                L.warning(f"[ReportRenderer] Image {uid} not found in database — will be absent from output")
+        except Exception as e:
+            L.warning(f"[ReportRenderer] Could not inline image {uid}: {e}", exc_info=True)
 
     def _replace(m: re.Match) -> str:
         uid = m.group(3)
         return f'{m.group(1)}{data_map[uid]}{m.group(4)}' if uid in data_map else m.group(0)
 
     return _IMAGE_SRC_RE.sub(_replace, html)
+
+
+async def collect_images_for_email(html: str) -> tuple[str, dict[str, tuple[str, bytes]]]:
+    """
+    Rewrite img:UUID src attributes to CID references and return the modified
+    HTML alongside a dict of {uuid: (mime_type, raw_bytes)} for embedding as
+    MIME inline attachments.
+
+    CID references are supported by all major email clients (Gmail, Outlook,
+    Apple Mail). Unlike data URIs, they are not stripped on delivery.
+
+    Images that cannot be resolved are left as-is and excluded from the dict.
+    """
+    from repositories.images import ImagesRepository
+
+    uuids = {m.group(3) for m in _IMAGE_SRC_RE.finditer(html)}
+    if not uuids:
+        return html, {}
+
+    repo = ImagesRepository()
+    image_map: dict[str, tuple[str, bytes]] = {}
+    for uid in uuids:
+        try:
+            result = await repo.get_data(UUID(uid))
+            if result:
+                mime_type, data_b64 = result
+                image_map[uid] = (mime_type, base64.b64decode(data_b64))
+            else:
+                L.warning(f"[ReportRenderer] Image {uid} not found in database — will be absent from email")
+        except Exception as e:
+            L.warning(f"[ReportRenderer] Could not fetch image {uid} for email: {e}", exc_info=True)
+
+    def _replace(m: re.Match) -> str:
+        uid = m.group(3)
+        return f'{m.group(1)}cid:{uid}@report{m.group(4)}' if uid in image_map else m.group(0)
+
+    return _IMAGE_SRC_RE.sub(_replace, html), image_map
 
 
 def build_html_document(body: str, title: str, is_markdown: bool = False) -> str:

@@ -108,5 +108,13 @@ class DataQueryService:
         for idx, row in enumerate(rows):
             row["_index"] = idx + 1
             row["_total"] = total
+            row["_even"] = (idx % 2 == 1)  # True for 2nd, 4th, 6th rows
             enriched.append(row)
-        return {"rows": enriched}
+
+        # _first exposes the first row's values at the top level so templates
+        # can reference scalar aggregates (e.g. {{#_first}}{{MaxReportedDate}}{{/_first}})
+        # without iterating all rows and repeating the value N times.
+        _first = {k: v for k, v in (enriched[0].items() if enriched else {}.items())
+                  if k not in ("_index", "_total", "_even")}
+
+        return {"rows": enriched, "_first": _first}
