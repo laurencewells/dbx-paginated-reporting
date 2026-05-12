@@ -1,5 +1,4 @@
 import asyncio
-import re
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -17,6 +16,7 @@ from common.authorization import (
     check_template_read_access,
 )
 from common.factories.cache import app_cache
+from common.filenames import safe_filename
 from common.logger import log as L
 from models.template import Template, TemplateCreate, TemplateUpdate
 from services.data_query import DataQueryService
@@ -135,10 +135,6 @@ async def delete_template(
     await app_cache.delete(f"preview:{template_id}:50")
 
 
-def _safe_filename(name: str) -> str:
-    return re.sub(r'[^\w\-.]', '_', name).strip('_') or "report"
-
-
 @router.get("/{template_id}/render-output")
 async def render_template_output(
     template_id: UUID,
@@ -170,7 +166,7 @@ async def render_template_output(
             body = await inline_images(body, pdf_mode=True)
             html = build_pdf_html_document(body, template.name, is_markdown=is_markdown)
             pdf_bytes = await asyncio.to_thread(html_to_pdf_bytes, html)
-            filename = _safe_filename(template.name) + ".pdf"
+            filename = safe_filename(template.name) + ".pdf"
             return Response(
                 content=pdf_bytes,
                 media_type="application/pdf",
@@ -183,7 +179,7 @@ async def render_template_output(
             body = await asyncio.to_thread(render_charts_as_svg, body or "")
             body = await inline_images(body)
             html = build_email_html_document(body, template.name, is_markdown=is_markdown)
-            filename = _safe_filename(template.name) + ".html"
+            filename = safe_filename(template.name) + ".html"
             return Response(
                 content=html,
                 media_type="text/html",

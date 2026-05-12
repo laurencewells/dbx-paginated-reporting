@@ -8,6 +8,7 @@ principal credentials (from environment) are used by SQLConnector by default.
 """
 
 import base64
+import html
 import io
 import re
 from pathlib import Path
@@ -511,7 +512,7 @@ def build_pdf_html_document(body: str, title: str, is_markdown: bool = False) ->
     return (
         f'<!DOCTYPE html><html><head>\n'
         f'<meta charset="utf-8">\n'
-        f'<title>{title}</title>\n'
+        f'<title>{html.escape(title)}</title>\n'
         f'<style>{_PDF_STYLES}{extra_styles}</style>\n'
         f'</head><body>{body}</body></html>'
     )
@@ -670,7 +671,7 @@ def build_html_document(body: str, title: str, is_markdown: bool = False) -> str
     return (
         f'<!DOCTYPE html><html><head>\n'
         f'<meta charset="utf-8">\n'
-        f'<title>{title}</title>\n'
+        f'<title>{html.escape(title)}</title>\n'
         f'<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">\n'
         f'<style>{_REPORT_STYLES}{extra_styles}</style>\n'
         f'</head><body>{body}</body></html>'
@@ -762,20 +763,20 @@ def build_email_html_document(body: str, title: str, is_markdown: bool = False) 
     - All styles are inlined via css-inline so they survive email client <head> stripping
     """
     extra_styles = _MARKDOWN_STYLES if is_markdown else ""
-    html = (
+    document = (
         f'<!DOCTYPE html><html><head>\n'
         f'<meta charset="utf-8">\n'
-        f'<title>{title}</title>\n'
+        f'<title>{html.escape(title)}</title>\n'
         f'<style>{_bootstrap_css()}{_EMAIL_STYLES}{extra_styles}</style>\n'
         f'</head><body>{body}</body></html>'
     )
     try:
         import css_inline
         inliner = css_inline.CSSInliner(keep_style_tags=False, load_remote_stylesheets=False)
-        return inliner.inline(html)
+        return inliner.inline(document)
     except Exception as exc:
         L.warning(f"[ReportRenderer] CSS inlining failed, sending without inlined styles: {exc}")
-        return html
+        return document
 
 
 async def render_report(template_id: UUID) -> tuple[str, Template]:

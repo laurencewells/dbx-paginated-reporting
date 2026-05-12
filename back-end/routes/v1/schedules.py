@@ -18,6 +18,7 @@ from common.authorization import (
 from common.email.factory import get_provider
 from common.exceptions import db_op
 from common.factories.scheduler import scheduler_factory
+from common.filenames import safe_filename
 from common.logger import log as L
 from models.schedule import ExecutionStatus, Schedule, ScheduleCreate, ScheduleExecution, ScheduleUpdate
 from repositories.email_send_lists import EmailSendListsRepository
@@ -115,7 +116,7 @@ async def _send_to_one_list(
                 recipients=send_list.emails,
                 subject=subject,
                 pdf_bytes=pdf_bytes,
-                filename=filename or f"{schedule.name}.pdf",
+                filename=filename or f"{safe_filename(schedule.name)}.pdf",
             )
         else:
             await provider.send_html(
@@ -198,7 +199,7 @@ async def _execute_report(
         pdf_bytes = await asyncio.to_thread(html_to_pdf_bytes, full_html)
         email_summary, email_failures = await _send_to_lists(
             schedule, send_lists_repo, smtp_repo,
-            pdf_bytes=pdf_bytes, filename=f"{template.name}.pdf",
+            pdf_bytes=pdf_bytes, filename=f"{safe_filename(template.name)}.pdf",
         )
     else:
         body = await asyncio.to_thread(render_charts_as_svg, html_body or "")

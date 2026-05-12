@@ -60,11 +60,12 @@ headStyleEl.setAttribute('data-report-preview', '')
 document.head.appendChild(headStyleEl)
 
 // Feature-detect @scope: Chrome 118+ / Safari 17.4+ support it; Firefox does not (as of 2026-05).
-// Without the feature, the entire @scope rule is silently dropped — falling back to
-// unscoped CSS preserves the preview at the cost of potentially bleeding template styles
-// (e.g. body { font-size: 10px }) into the host app UI. Acceptable trade-off vs. an empty preview.
-const _SUPPORTS_SCOPE = typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
-  && CSS.supports('selector(:scope)') && CSS.supports('(:scope)')
+// Detect via CSSScopeRule (the interface for the at-rule itself); CSS.supports('(:scope)') is
+// not a valid condition and CSS.supports('selector(:scope)') only tests the selector, which has
+// been supported far longer than the at-rule. Without the feature, the entire @scope rule is
+// silently dropped — falling back to unscoped CSS preserves the preview at the cost of
+// potentially bleeding template styles (e.g. body { font-size: 10px }) into the host app UI.
+const _SUPPORTS_SCOPE = typeof window !== 'undefined' && 'CSSScopeRule' in window
 
 watchEffect(() => {
   const blocks: string[] = []
