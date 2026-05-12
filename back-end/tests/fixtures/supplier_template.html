@@ -1,0 +1,66 @@
+<div class="report-page">
+  <div class="mb-5">
+    <h1 class="fw-bold text-primary">Supplier Summary Report</h1>
+    <p class="text-muted small">Aggregated supplier performance and customer insights</p>
+  </div>
+  <div class="chart-container">
+    <div class="chart-title">Sales by Supplier</div>
+    <div class="report-bar-chart" data-labels="{{#rows}}{{supplier_name}},{{/rows}}" data-values="{{#rows}}{{total_sales_amount}},{{/rows}}">
+    </div>
+  </div>
+  <div class="chart-container">
+    <div class="chart-title">Revenue by Region</div>
+    <div class="report-pie-chart" data-labels="North,South,East,West" data-values="35,25,20,20">
+    </div>
+  </div>
+</div>
+{{#rows}}
+  <div class="report-page">
+    <div class="mb-4 pb-4 border-bottom">
+      <div class="row align-items-start">
+        <div class="col-md-8">
+          <h2 class="fw-bold mb-2" style="color: #0d6efd;">{{supplier_name}}</h2>
+          <span class="badge bg-dark text-white">ID: {{supplierID}}</span>
+          <span class="badge bg-primary">{{supplier_continent}}</span>
+          <p class="mb-0 fs-5 fw-semibold">{{supplier_city}}</p>
+        </div>
+        <div class="col-md-4">
+          <p class="text-muted small">Supplier {{_index}} of {{_total}}</p>
+          <div class="bg-light p-3 rounded">
+            <p class="text-muted small mb-1">Transactions</p>
+            <p class="fw-bold fs-5 mb-0">{{total_transactions}}</p>
+            <p class="text-muted small mb-1">Total Sales</p>
+            <p class="fw-bold fs-5 text-success mb-0">${{total_sales_amount}}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <h5 class="fw-semibold mb-3">Top 5 Customers</h5>
+    <table class="report-table">
+      <thead><tr><th>Customer Name</th><th>Transactions</th><th>Amount</th></tr></thead>
+      <tbody>
+        {{#top_5_customers}}
+          <tr><td>{{customer_name}}</td><td>{{transactions}}</td><td>${{amount}}</td></tr>
+        {{/top_5_customers}}
+      </tbody>
+    </table>
+    {{^top_5_customers}}<p class="text-muted small">No customer data available</p>{{/top_5_customers}}
+    <h5 class="fw-semibold mb-3">Top 3 Products</h5>
+    <div class="row">
+      {{#top_3_products}}
+        <div class="col-4">
+          <div class="card">
+            <h5 class="card-header">{{product}}</h5>
+            <div class="card-body">
+              <p class="card-text">{{transactions}} transactions, revenue ${{amount}}</p>
+            </div>
+          </div>
+        </div>
+      {{/top_3_products}}
+      {{^top_3_products}}<p class="text-muted small">No product data available</p>{{/top_3_products}}
+    </div>
+    <div class="text-center text-muted small mt-5 pt-4 border-top">
+      <p>Page {{_index}} of {{_total}}</p>
+    </div>
+  </div>
+{{/rows}}

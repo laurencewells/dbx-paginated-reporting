@@ -83,21 +83,62 @@ Each field maps directly to a named key on every object inside `rows`.
 """
 
 
-def build_report_agent_prompt(
-    structure: Structure, template: Template
-) -> str:
-    """
-    Return a system prompt tailored to the current template and structure.
+_EMAIL_RENDERING_CONSTRAINTS = """
+## Rendering Constraints — Email format
 
-    Serves an HTML-specific prompt for html templates and a Markdown-specific
-    prompt for markdown templates so the agent gives correctly targeted advice.
-    """
+This template is set to **Email** format. It will be delivered as an inline HTML email and can also be downloaded as a self-contained HTML file.
+
+**Email client limitations to design around:**
+- Maximum effective content width is **600px** — wider content will overflow or be clipped in Gmail/Outlook.
+- Many email clients strip `<head>` styles; CSS is inlined automatically before delivery, so class-based Bootstrap utilities work fine.
+- `position: absolute/fixed`, CSS animations, and `@media` queries are stripped by most clients.
+- `background-image` with external URLs may be blocked — use solid `background-color` instead.
+- Avoid complex CSS like `box-shadow`, `filter`, `clip-path` — they are silently ignored.
+- `<script>` tags are always stripped.
+- For images, use `img:UUID` references — they are converted to CID inline attachments (supported by Gmail, Outlook, Apple Mail). Never use external URLs for images that must appear.
+"""
+
+_PDF_RENDERING_CONSTRAINTS = """
+## Rendering Constraints — PDF format (Experimental)
+
+This template is set to **PDF** format. Scheduled deliveries attach a PDF generated server-side by **xhtml2pdf**, a pure-Python renderer that supports **CSS 2.1 only**.
+
+**xhtml2pdf does NOT support — avoid these in templates:**
+- `display: flex` / `display: grid` — multi-column Bootstrap `.row`/`.col-*` layouts and `report-grid-*` will stack vertically, not side by side.
+- `gap`, `column-gap`, `row-gap`
+- `background: linear-gradient(...)` — use solid `background-color` instead.
+- `box-shadow`, `filter`, `border-radius` (silently ignored)
+- CSS `column-count` (`.report-columns-*` classes won't split into columns)
+- `break-after`/`break-before` — use `page-break-after`/`page-break-before` (CSS 2.1 equivalents)
+
+**What DOES work well:**
+- `<table>` layouts — use tables for any multi-column arrangement.
+- `page-break-after: always` on `.report-page` divs.
+- `page-break-inside: avoid` on `.no-break` blocks.
+- `@page { size: A4; margin: 10mm; }` page sizing.
+- Solid colours, borders, padding, margins, font styling.
+- Charts are rendered as PNG images before PDF generation — they look identical to the browser preview.
+- Images are embedded as base64 data URIs — no external requests needed.
+
+**Design guidance for PDF templates:**
+- Use `<table>` with explicit `width` attributes for side-by-side column layouts.
+- Keep layouts single-column where possible for the most reliable output.
+- Test with simple HTML first; add complexity incrementally and check the PDF export each time.
+"""
+
+
+def build_report_agent_prompt(structure: Structure, template: Template) -> str:
+    """Return a system prompt tailored to the current template, structure, and page_size."""
+    rendering_constraints = (
+        _PDF_RENDERING_CONSTRAINTS if template.page_size == "A4"
+        else _EMAIL_RENDERING_CONSTRAINTS
+    )
     if template.template_type == "markdown":
-        return _build_markdown_prompt(structure, template)
-    return _build_html_prompt(structure, template)
+        return _build_markdown_prompt(structure, template, rendering_constraints)
+    return _build_html_prompt(structure, template, rendering_constraints)
 
 
-def _build_html_prompt(structure: Structure, template: Template) -> str:
+def _build_html_prompt(structure: Structure, template: Template, rendering_constraints: str = "") -> str:
     return f"""You are an expert report-building assistant for a paginated reporting application.
 You help users write Mustache HTML templates for data-driven reports.
 {_MUSTACHE_REFERENCE}
@@ -236,6 +277,7 @@ Define `.report-global-header` and `.report-global-footer` ONCE outside any `.re
 {_DATA_SHAPE_SECTION}
 {_fields_section(structure)}
 {_sql_section(structure)}
+{rendering_constraints}
 ## Current Template: "{template.name}"
 
 ```html
@@ -249,10 +291,11 @@ Define `.report-global-header` and `.report-global-footer` ONCE outside any `.re
 - When users ask about fields, reference the structure definition above.
 - **Always wrap every HTML response in a single markdown code block** (` ```html ... ``` `) so the user can copy and paste it directly.
 - Output complete, self-contained templates — never partial snippets unless the user explicitly asks for one.
+- When suggesting layouts or CSS, respect the rendering constraints for this template's format listed above.
 """
 
 
-def _build_markdown_prompt(structure: Structure, template: Template) -> str:
+def _build_markdown_prompt(structure: Structure, template: Template, rendering_constraints: str = "") -> str:
     return f"""You are an expert report-building assistant for a paginated reporting application.
 You help users write Mustache + Markdown templates for data-driven reports.
 
@@ -380,6 +423,7 @@ Only works in Markdown templates if the rendered output wraps content in `.repor
 {_DATA_SHAPE_SECTION}
 {_fields_section(structure)}
 {_sql_section(structure)}
+{rendering_constraints}
 ## Current Template: "{template.name}"
 
 ```markdown
@@ -394,4 +438,5 @@ Only works in Markdown templates if the rendered output wraps content in `.repor
 - Output complete, self-contained templates — never partial snippets unless the user explicitly asks for one.
 - Never suggest Bootstrap classes or CSS — they have no effect in Markdown templates.
 - Charts and images require inline HTML passthrough — use the div/img patterns documented above, not Markdown image syntax for gallery images.
+- When suggesting inline HTML blocks, respect the rendering constraints for this template's format listed above.
 """

@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "databricks-paginated-reporting"
 version = "0.0.1"
+requires-python = "==3.11.*"
 dependencies = [
     "databricks-sdk==0.88.0",
     "databricks-sql-connector[pyarrow]==4.2.5",
@@ -17,6 +18,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "greenlet>=2.0.0",
     "aiocache==0.12.3",
+    "reportlab==3.6.13",
+    "xhtml2pdf==0.2.11"
 ]
 
 [project.optional-dependencies]

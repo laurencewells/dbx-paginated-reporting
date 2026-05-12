@@ -210,7 +210,26 @@ class TestMapResultsToData:
     def test_empty_rows_returns_empty_list(self):
         svc = self._svc()
         result = svc._map_results_to_data([], [], _make_structure())
-        assert result == {"rows": []}
+        assert result == {"rows": [], "_first": {}}
+
+    def test_first_excludes_nested_arrays_and_structs(self):
+        """_first must only carry scalar fields — nested data stays in rows."""
+        svc = self._svc()
+        rows = [
+            {"name": "alpha", "count": 5, "items": [1, 2], "meta": {"k": "v"}},
+            {"name": "beta", "count": 7, "items": [], "meta": {}},
+        ]
+        result = svc._map_results_to_data(["name", "count", "items", "meta"], rows, _make_structure())
+        assert result["_first"] == {"name": "alpha", "count": 5}
+
+    def test_first_does_not_include_enrichment_keys(self):
+        """_first is built before enrichment so _index/_total/_even never leak in."""
+        svc = self._svc()
+        rows = [{"name": "alpha"}, {"name": "beta"}]
+        result = svc._map_results_to_data(["name"], rows, _make_structure())
+        assert "_index" not in result["_first"]
+        assert "_total" not in result["_first"]
+        assert "_even" not in result["_first"]
 
 
 # ---------------------------------------------------------------------------

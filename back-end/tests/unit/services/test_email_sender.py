@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from common.email._secret import get_secret
+from common.email.base import CID_DOMAIN
 from common.email.providers.sendgrid import SendGridEmailProvider
 from common.email.providers.smtp import SmtpEmailProvider
 
@@ -135,6 +136,78 @@ class TestSmtpEmailProviderSendHtml:
                     html_body="body",
                 )
 
+    @pytest.mark.asyncio
+    async def test_cid_images_produce_multipart_related(self):
+        mock_smtp = _mock_smtp_server()
+        captured: dict = {}
+
+        def capture_sendmail(from_addr, to_addrs, msg_str):
+            captured["raw"] = msg_str
+
+        mock_smtp.sendmail.side_effect = capture_sendmail
+        provider = SmtpEmailProvider("smtp.example.com", 587, "u", "pw")
+        uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        cid_images = {uid: ("image/png", b"\x89PNG\r\n")}
+
+        with patch("smtplib.SMTP", return_value=mock_smtp):
+            await provider.send_html(
+                from_email="f@example.com",
+                recipients=["r@example.com"],
+                subject="S",
+                html_body=f'<img src="cid:{uid}@{CID_DOMAIN}" />',
+                cid_images=cid_images,
+            )
+
+        assert "multipart/related" in captured["raw"]
+        assert f"{uid}@{CID_DOMAIN}" in captured["raw"]
+
+    @pytest.mark.asyncio
+    async def test_no_cid_images_produces_multipart_alternative(self):
+        mock_smtp = _mock_smtp_server()
+        captured: dict = {}
+
+        def capture_sendmail(from_addr, to_addrs, msg_str):
+            captured["raw"] = msg_str
+
+        mock_smtp.sendmail.side_effect = capture_sendmail
+        provider = SmtpEmailProvider("smtp.example.com", 587, "u", "pw")
+
+        with patch("smtplib.SMTP", return_value=mock_smtp):
+            await provider.send_html(
+                from_email="f@example.com",
+                recipients=["r@example.com"],
+                subject="S",
+                html_body="<p>no images</p>",
+            )
+
+        assert "multipart/alternative" in captured["raw"]
+        assert "multipart/related" not in captured["raw"]
+
+    @pytest.mark.asyncio
+    async def test_plaintext_alternative_included(self):
+        """Every HTML email must include a text/plain part so spam filters don't penalise."""
+        mock_smtp = _mock_smtp_server()
+        captured: dict = {}
+
+        def capture_sendmail(from_addr, to_addrs, msg_str):
+            captured["raw"] = msg_str
+
+        mock_smtp.sendmail.side_effect = capture_sendmail
+        provider = SmtpEmailProvider("smtp.example.com", 587, "u", "pw")
+
+        with patch("smtplib.SMTP", return_value=mock_smtp):
+            await provider.send_html(
+                from_email="f@example.com",
+                recipients=["r@example.com"],
+                subject="S",
+                html_body="<p>Hello <strong>world</strong></p>",
+            )
+
+        assert "text/plain" in captured["raw"]
+        assert "text/html" in captured["raw"]
+        # Plain part should contain the visible text, not the tags
+        assert "Hello" in captured["raw"]
+
 
 class TestSmtpEmailProviderSendAttachment:
     @pytest.mark.asyncio
@@ -256,3 +329,57 @@ class TestSendGridEmailProvider:
             )
 
         mock_sg.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cid_images_added_as_inline_attachments(self):
+        mock_sg = MagicMock()
+        mock_sg.send.return_value = _mock_sg_response()
+        provider = SendGridEmailProvider(api_key="SG.test-api-key")
+        uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        cid_images = {uid: ("image/png", b"\x89PNG\r\n")}
+
+        with patch("sendgrid.SendGridAPIClient", return_value=mock_sg):
+            await provider.send_html(
+                from_email="from@example.com",
+                recipients=["alice@example.com"],
+                subject="Test",
+                html_body=f'<img src="cid:{uid}@{CID_DOMAIN}" />',
+                cid_images=cid_images,
+            )
+
+        mock_sg.send.assert_called_once()
+        mail_obj = mock_sg.send.call_args[0][0]
+        # mail.attachment is write-only; serialised state is the source of truth
+        attachments = mail_obj.get().get("attachments", [])
+        assert len(attachments) == 1
+        assert attachments[0]["disposition"] == "inline"
+        assert attachments[0]["content_id"] == f"{uid}@{CID_DOMAIN}"
+
+    @pytest.mark.asyncio
+    async def test_cid_images_multiple_all_attached(self):
+        """Regression: assigning message.attachment in a loop dropped all but one."""
+        mock_sg = MagicMock()
+        mock_sg.send.return_value = _mock_sg_response()
+        provider = SendGridEmailProvider(api_key="SG.test-api-key")
+        uid_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        uid_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        cid_images = {
+            uid_a: ("image/png", b"\x89PNG-a"),
+            uid_b: ("image/jpeg", b"\xff\xd8\xff-b"),
+        }
+
+        with patch("sendgrid.SendGridAPIClient", return_value=mock_sg):
+            await provider.send_html(
+                from_email="from@example.com",
+                recipients=["alice@example.com"],
+                subject="Test",
+                html_body=f'<img src="cid:{uid_a}@{CID_DOMAIN}" /><img src="cid:{uid_b}@{CID_DOMAIN}" />',
+                cid_images=cid_images,
+            )
+
+        mail_obj = mock_sg.send.call_args[0][0]
+        attachments = mail_obj.get().get("attachments", [])
+        assert len(attachments) == 2
+        content_ids = {a["content_id"] for a in attachments}
+        assert content_ids == {f"{uid_a}@{CID_DOMAIN}", f"{uid_b}@{CID_DOMAIN}"}
+        assert all(a["disposition"] == "inline" for a in attachments)

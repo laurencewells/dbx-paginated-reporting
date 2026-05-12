@@ -1,7 +1,7 @@
 import asyncio
 import os
 import uuid as _uuid
-from typing import List
+from typing import Dict, List, Tuple
 from uuid import UUID
 
 from apscheduler.jobstores.base import JobLookupError
@@ -18,12 +18,22 @@ from common.authorization import (
 from common.email.factory import get_provider
 from common.exceptions import db_op
 from common.factories.scheduler import scheduler_factory
+from common.filenames import safe_filename
 from common.logger import log as L
 from models.schedule import ExecutionStatus, Schedule, ScheduleCreate, ScheduleExecution, ScheduleUpdate
 from repositories.email_send_lists import EmailSendListsRepository
 from repositories.schedules import SchedulesRepository
 from repositories.smtp_connections import SmtpConnectionsRepository
-from services.report_renderer import build_email_html_document, render_charts_as_svg, render_report
+from services.report_renderer import (
+    build_email_html_document,
+    build_pdf_html_document,
+    collect_images_for_email,
+    html_to_pdf_bytes,
+    inline_images,
+    render_charts_as_svg,
+    render_charts_for_pdf,
+    render_report,
+)
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -85,17 +95,37 @@ async def _send_to_one_list(
     schedule: Schedule,
     send_list,
     smtp_conn,
-    html_body: str,
+    html_body: str | None = None,
+    cid_images: Dict[str, Tuple[str, bytes]] | None = None,
+    pdf_bytes: bytes | None = None,
+    filename: str | None = None,
 ) -> tuple[str, bool]:
-    """Send to a single list. Returns (message, has_error)."""
+    """Send to a single list. Returns (message, has_error).
+
+    Exactly one of pdf_bytes or html_body must be provided.
+    """
+    assert (pdf_bytes is None) != (html_body is None), (
+        "_send_to_one_list requires exactly one of pdf_bytes or html_body"
+    )
     try:
         provider = get_provider(smtp_conn)
-        await provider.send_html(
-            from_email=smtp_conn.from_email,
-            recipients=send_list.emails,
-            subject=f"Scheduled Report: {schedule.name}",
-            html_body=html_body,
-        )
+        subject = f"Scheduled Report: {schedule.name}"
+        if pdf_bytes is not None:
+            await provider.send_attachment(
+                from_email=smtp_conn.from_email,
+                recipients=send_list.emails,
+                subject=subject,
+                pdf_bytes=pdf_bytes,
+                filename=filename or f"{safe_filename(schedule.name)}.pdf",
+            )
+        else:
+            await provider.send_html(
+                from_email=smtp_conn.from_email,
+                recipients=send_list.emails,
+                subject=subject,
+                html_body=html_body or "",
+                cid_images=cid_images or None,
+            )
         return f"Emails sent: {send_list.name} ({len(send_list.emails)} recipient(s))", False
     except Exception as e:
         L.error(f"[Scheduler] Email failed for send list {send_list.name}: {e}")
@@ -104,12 +134,16 @@ async def _send_to_one_list(
 
 async def _send_to_lists(
     schedule: Schedule,
-    html_body: str,
     send_lists_repo: EmailSendListsRepository,
     smtp_repo: SmtpConnectionsRepository,
+    html_body: str | None = None,
+    cid_images: Dict[str, Tuple[str, bytes]] | None = None,
+    pdf_bytes: bytes | None = None,
+    filename: str | None = None,
 ) -> tuple[str, bool]:
-    """Send the rendered report as HTML to all attached send lists.
+    """Send the rendered report to all attached send lists.
 
+    Pass html_body for inline HTML delivery or pdf_bytes+filename for PDF attachment.
     Returns a tuple of (summary_message, has_failures).
     """
     if not schedule.send_list_ids:
@@ -127,7 +161,11 @@ async def _send_to_lists(
             has_failures = True
             lines.append(f"Email failed: {sl.name} — connection not found")
             continue
-        message, error = await _send_to_one_list(schedule, sl, conn, html_body)
+        message, error = await _send_to_one_list(
+            schedule, sl, conn,
+            html_body=html_body, cid_images=cid_images,
+            pdf_bytes=pdf_bytes, filename=filename,
+        )
         lines.append(message)
         if error:
             has_failures = True
@@ -143,11 +181,34 @@ async def _execute_report(
     smtp_repo: SmtpConnectionsRepository,
 ) -> None:
     """Core report execution logic — called inside a timeout wrapper."""
+    if not schedule.send_list_ids:
+        # PDF rendering is expensive; skip the whole pipeline when there's nowhere to send.
+        await repo.update_execution(
+            execution_id, ExecutionStatus.success, error_message="No send lists configured",
+        )
+        L.info(f"[Scheduler] Execution {execution_id} skipped — no send lists configured")
+        return
+
     html_body, template = await render_report(schedule.template_id)
     is_markdown = template.template_type == "markdown"
-    body = render_charts_as_svg(html_body or "")
-    full_html = build_email_html_document(body, template.name, is_markdown=is_markdown)
-    email_summary, email_failures = await _send_to_lists(schedule, full_html, send_lists_repo, smtp_repo)
+
+    if template.page_size == "A4":
+        body = await asyncio.to_thread(render_charts_for_pdf, html_body or "")
+        body = await inline_images(body, pdf_mode=True)
+        full_html = build_pdf_html_document(body, template.name, is_markdown=is_markdown)
+        pdf_bytes = await asyncio.to_thread(html_to_pdf_bytes, full_html)
+        email_summary, email_failures = await _send_to_lists(
+            schedule, send_lists_repo, smtp_repo,
+            pdf_bytes=pdf_bytes, filename=f"{safe_filename(template.name)}.pdf",
+        )
+    else:
+        body = await asyncio.to_thread(render_charts_as_svg, html_body or "")
+        body, cid_images = await collect_images_for_email(body)
+        full_html = build_email_html_document(body, template.name, is_markdown=is_markdown)
+        email_summary, email_failures = await _send_to_lists(
+            schedule, send_lists_repo, smtp_repo,
+            html_body=full_html, cid_images=cid_images,
+        )
 
     status = ExecutionStatus.failed if email_failures else ExecutionStatus.success
     await repo.update_execution(execution_id, status, error_message=email_summary or None)

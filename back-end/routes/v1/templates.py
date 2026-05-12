@@ -1,4 +1,4 @@
-import re
+import asyncio
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -16,6 +16,7 @@ from common.authorization import (
     check_template_read_access,
 )
 from common.factories.cache import app_cache
+from common.filenames import safe_filename
 from common.logger import log as L
 from models.template import Template, TemplateCreate, TemplateUpdate
 from services.data_query import DataQueryService
@@ -134,38 +135,63 @@ async def delete_template(
     await app_cache.delete(f"preview:{template_id}:50")
 
 
-def _safe_filename(name: str) -> str:
-    return re.sub(r'[^\w\-.]', '_', name).strip('_') or "report"
-
-
-@router.get("/{template_id}/render")
-async def render_template_html(
+@router.get("/{template_id}/render-output")
+async def render_template_output(
     template_id: UUID,
     email: CurrentUser,
     repo: TemplatesRepo,
     structures_repo: StructuresRepo,
     projects_repo: ProjectsRepo,
 ):
-    """Server-side render to HTML — for testing scheduled output."""
+    """Render the template to its configured format: PDF for A4, self-contained HTML for email.
+
+    This is the single download endpoint. Frontend dispatches on the response's
+    Content-Type / Content-Disposition rather than picking an endpoint up-front.
+    """
     await check_template_read_access(template_id, email, repo, structures_repo, projects_repo)
     try:
-        from services.report_renderer import build_email_html_document, inline_images, render_charts_as_svg, render_report
+        from services.report_renderer import (
+            build_email_html_document,
+            build_pdf_html_document,
+            html_to_pdf_bytes,
+            inline_images,
+            render_charts_as_svg,
+            render_charts_for_pdf,
+            render_report,
+        )
         body, template = await render_report(template_id)
-        body = await inline_images(body)
-        body = render_charts_as_svg(body)
         is_markdown = template.template_type == "markdown"
-        html = build_email_html_document(body, template.name, is_markdown=is_markdown)
+        if template.page_size == "A4":
+            body = await asyncio.to_thread(render_charts_for_pdf, body or "")
+            body = await inline_images(body, pdf_mode=True)
+            html = build_pdf_html_document(body, template.name, is_markdown=is_markdown)
+            pdf_bytes = await asyncio.to_thread(html_to_pdf_bytes, html)
+            filename = safe_filename(template.name) + ".pdf"
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Cache-Control": "no-store",
+                },
+            )
+        else:
+            body = await asyncio.to_thread(render_charts_as_svg, body or "")
+            body = await inline_images(body)
+            html = build_email_html_document(body, template.name, is_markdown=is_markdown)
+            filename = safe_filename(template.name) + ".html"
+            return Response(
+                content=html,
+                media_type="text/html",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Cache-Control": "no-store",
+                },
+            )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
-    filename = _safe_filename(template.name) + ".html"
-    return Response(
-        content=html,
-        media_type="text/html",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
 
 
 @router.post("/{template_id}/preview-data", response_model=Dict[str, Any])

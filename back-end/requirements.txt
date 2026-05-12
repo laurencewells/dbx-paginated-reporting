@@ -14,3 +14,5 @@ chevron==0.14.0
 markdown2==2.5.5
 sendgrid==6.12.5
 css-inline==0.20.1
+reportlab==3.6.13
+xhtml2pdf==0.2.11

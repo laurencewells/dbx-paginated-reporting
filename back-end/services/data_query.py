@@ -103,10 +103,25 @@ class DataQueryService:
         lists courtesy of Databricks Arrow serialisation — no further mapping
         is required.
         """
+        # _first exposes the first row's scalar values at the top level so templates
+        # can reference scalar aggregates (e.g. {{#_first}}{{report_date}}{{/_first}})
+        # without iterating all rows. Nested arrays/structs are excluded to keep
+        # the payload small and the contract obvious. Built before enrichment so
+        # the loop order below can change without affecting _first's contents.
+        _first: Dict[str, Any] = {}
+        if rows:
+            _first = {
+                k: v for k, v in rows[0].items()
+                if not isinstance(v, (list, dict))
+            }
+
         total = len(rows)
         enriched = []
         for idx, row in enumerate(rows):
             row["_index"] = idx + 1
             row["_total"] = total
+            # True when _index is even (2nd, 4th, ... rows) — useful for zebra striping.
+            row["_even"] = row["_index"] % 2 == 0
             enriched.append(row)
-        return {"rows": enriched}
+
+        return {"rows": enriched, "_first": _first}

@@ -13,6 +13,7 @@ const props = defineProps<{
   templateName: string | null
   htmlContent: string
   templateType?: 'html' | 'markdown'
+  pageSize?: 'A4' | 'email'
   structureName?: string | null
 }>()
 
@@ -211,6 +212,17 @@ async function exportToPdf() {
     exporting.value = false
   }
 }
+
+function downloadHtml() {
+  if (!props.templateId) return
+  // Server sets Content-Disposition with the canonical filename; same-origin
+  // browsers honour the response header, so no anchor download attribute needed.
+  const a = document.createElement('a')
+  a.href = `/api/v1/templates/${props.templateId}/render-output`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
 </script>
 
 <template>
@@ -246,6 +258,7 @@ async function exportToPdf() {
               />
             </template>
             <button
+              v-if="pageSize !== 'email'"
               class="btn btn-danger btn-sm"
               @click="exportToPdf"
               :disabled="!templateId || exporting || loadingData"
@@ -253,6 +266,15 @@ async function exportToPdf() {
               <span v-if="exporting" class="spinner-border spinner-border-sm me-1" role="status"></span>
               <i v-else class="bi bi-file-earmark-pdf me-1"></i>
               {{ exporting ? 'Generating…' : 'Export PDF' }}
+            </button>
+            <button
+              v-else
+              class="btn btn-outline-secondary btn-sm"
+              @click="downloadHtml"
+              :disabled="!templateId || loadingData"
+            >
+              <i class="bi bi-file-earmark-code me-1"></i>
+              Download HTML
             </button>
             <button class="btn btn-outline-secondary btn-sm" @click="emit('update:show', false)" title="Close">
               <i class="bi bi-x-lg"></i>

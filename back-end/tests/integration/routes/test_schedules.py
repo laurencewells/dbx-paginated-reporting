@@ -34,6 +34,7 @@ def _schedule(
     name: str = "Daily Report",
     is_active: bool = True,
     cron_expression: str = "0 9 * * 1",
+    send_list_ids: list[uuid.UUID] | None = None,
 ) -> Schedule:
     return Schedule(
         id=id or SCHID,
@@ -43,6 +44,7 @@ def _schedule(
         template_id=TID,
         cron_expression=cron_expression,
         is_active=is_active,
+        send_list_ids=send_list_ids if send_list_ids is not None else [uuid.uuid4()],
         created_by="user@example.com",
         created_at=NOW,
         updated_at=NOW,
@@ -676,7 +678,9 @@ class TestSendToOneList:
         provider = MagicMock()
         provider.send_html = AsyncMock()
         with patch("routes.v1.schedules.get_provider", return_value=provider):
-            msg, has_error = await _send_to_one_list(_schedule(), _send_list(), _smtp_conn(), "<p>body</p>", None)
+            msg, has_error = await _send_to_one_list(
+                _schedule(), _send_list(), _smtp_conn(), html_body="<p>body</p>",
+            )
         assert has_error is False
         assert "Emails sent" in msg
         provider.send_html.assert_awaited_once()
@@ -688,7 +692,8 @@ class TestSendToOneList:
         provider.send_attachment = AsyncMock()
         with patch("routes.v1.schedules.get_provider", return_value=provider):
             msg, has_error = await _send_to_one_list(
-                _schedule(), _send_list(), _smtp_conn(), "<p>body</p>", b"%PDF"
+                _schedule(), _send_list(), _smtp_conn(),
+                pdf_bytes=b"%PDF", filename="report.pdf",
             )
         assert has_error is False
         provider.send_attachment.assert_awaited_once()
@@ -700,9 +705,26 @@ class TestSendToOneList:
         provider = MagicMock()
         provider.send_html = AsyncMock(side_effect=Exception("SMTP timeout"))
         with patch("routes.v1.schedules.get_provider", return_value=provider):
-            msg, has_error = await _send_to_one_list(_schedule(), _send_list(), _smtp_conn(), "<p>x</p>", None)
+            msg, has_error = await _send_to_one_list(
+                _schedule(), _send_list(), _smtp_conn(), html_body="<p>x</p>",
+            )
         assert has_error is True
         assert "Email failed" in msg
+
+    @pytest.mark.asyncio
+    async def test_rejects_neither_html_nor_pdf(self):
+        from routes.v1.schedules import _send_to_one_list
+        with pytest.raises(AssertionError):
+            await _send_to_one_list(_schedule(), _send_list(), _smtp_conn())
+
+    @pytest.mark.asyncio
+    async def test_rejects_both_html_and_pdf(self):
+        from routes.v1.schedules import _send_to_one_list
+        with pytest.raises(AssertionError):
+            await _send_to_one_list(
+                _schedule(), _send_list(), _smtp_conn(),
+                html_body="<p>x</p>", pdf_bytes=b"%PDF",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -714,10 +736,10 @@ class TestSendToLists:
     @pytest.mark.asyncio
     async def test_returns_empty_string_when_no_send_list_ids(self):
         from routes.v1.schedules import _send_to_lists
-        schedule = _schedule()  # has no send_list_ids
+        schedule = _schedule(send_list_ids=[])
         send_lists_repo = MagicMock()
         smtp_repo = MagicMock()
-        msg, has_failures = await _send_to_lists(schedule, "<p>x</p>", send_lists_repo, smtp_repo)
+        msg, has_failures = await _send_to_lists(schedule, send_lists_repo, smtp_repo, html_body="<p>x</p>")
         assert msg == ""
         assert has_failures is False
 
@@ -730,7 +752,7 @@ class TestSendToLists:
         send_lists_repo = MagicMock()
         send_lists_repo.get_by_ids = AsyncMock(return_value=[sl])
         smtp_repo = MagicMock()
-        _, has_failures = await _send_to_lists(schedule, "<p>x</p>", send_lists_repo, smtp_repo)
+        _, has_failures = await _send_to_lists(schedule, send_lists_repo, smtp_repo, html_body="<p>x</p>")
         assert has_failures is False
 
     @pytest.mark.asyncio
@@ -743,7 +765,7 @@ class TestSendToLists:
         send_lists_repo.get_by_ids = AsyncMock(return_value=[sl])
         smtp_repo = MagicMock()
         smtp_repo.get_by_id = AsyncMock(return_value=None)
-        msg, has_failures = await _send_to_lists(schedule, "<p>x</p>", send_lists_repo, smtp_repo)
+        msg, has_failures = await _send_to_lists(schedule, send_lists_repo, smtp_repo, html_body="<p>x</p>")
         assert has_failures is True
         assert "connection not found" in msg
 
@@ -760,7 +782,7 @@ class TestSendToLists:
         provider = MagicMock()
         provider.send_html = AsyncMock()
         with patch("routes.v1.schedules.get_provider", return_value=provider):
-            msg, has_failures = await _send_to_lists(schedule, "<p>body</p>", send_lists_repo, smtp_repo)
+            msg, has_failures = await _send_to_lists(schedule, send_lists_repo, smtp_repo, html_body="<p>body</p>")
         assert has_failures is False
         provider.send_html.assert_awaited_once()
 
@@ -788,7 +810,8 @@ class TestExecuteReport:
         with (
             patch("routes.v1.schedules.render_report", new=AsyncMock(return_value=("<p>x</p>", email_tmpl))),
             patch("routes.v1.schedules.render_charts_as_svg", return_value="<p>x</p>"),
-            patch("routes.v1.schedules.build_html_document", return_value="<html/>"),
+            patch("routes.v1.schedules.collect_images_for_email", new=AsyncMock(return_value=("<p>x</p>", {}))),
+            patch("routes.v1.schedules.build_email_html_document", return_value="<html/>"),
             patch("routes.v1.schedules._send_to_lists", new=AsyncMock(return_value=("", False))),
         ):
             await _execute_report(EXECID, _schedule(), repo, send_lists_repo, smtp_repo)
@@ -811,12 +834,19 @@ class TestExecuteReport:
 
         with (
             patch("routes.v1.schedules.render_report", new=AsyncMock(return_value=("<p>x</p>", pdf_tmpl))),
-            patch("routes.v1.schedules.render_report_pdf", new=AsyncMock(return_value=(b"%PDF", pdf_tmpl))),
-            patch("routes.v1.schedules._send_to_lists", new=AsyncMock(return_value=("", False))),
+            patch("routes.v1.schedules.render_charts_for_pdf", return_value="<p>x</p>"),
+            patch("routes.v1.schedules.inline_images", new=AsyncMock(return_value="<p>x</p>")),
+            patch("routes.v1.schedules.build_pdf_html_document", return_value="<html/>"),
+            patch("routes.v1.schedules.html_to_pdf_bytes", return_value=b"%PDF-fake"),
+            patch("routes.v1.schedules._send_to_lists", new=AsyncMock(return_value=("", False))) as send_mock,
         ):
             await _execute_report(EXECID, _schedule(), repo, MagicMock(), MagicMock())
 
         repo.update_execution.assert_awaited_once()
+        # _send_to_lists must have been called with pdf_bytes (not html_body)
+        kwargs = send_mock.call_args.kwargs
+        assert kwargs.get("pdf_bytes") == b"%PDF-fake"
+        assert kwargs.get("html_body") is None
 
     @pytest.mark.asyncio
     async def test_marks_execution_failed_when_emails_fail(self):
@@ -833,13 +863,38 @@ class TestExecuteReport:
         with (
             patch("routes.v1.schedules.render_report", new=AsyncMock(return_value=("", email_tmpl))),
             patch("routes.v1.schedules.render_charts_as_svg", return_value=""),
-            patch("routes.v1.schedules.build_html_document", return_value=""),
+            patch("routes.v1.schedules.collect_images_for_email", new=AsyncMock(return_value=("", {}))),
+            patch("routes.v1.schedules.build_email_html_document", return_value=""),
             patch("routes.v1.schedules._send_to_lists", new=AsyncMock(return_value=("SMTP error", True))),
         ):
             await _execute_report(EXECID, _schedule(), repo, MagicMock(), MagicMock())
 
         args = repo.update_execution.call_args
         assert args[0][1].value == "failed"
+
+    @pytest.mark.asyncio
+    async def test_skips_render_when_no_send_lists(self):
+        """No recipients = no rendering. PDF generation is expensive; skip the whole pipeline."""
+        from routes.v1.schedules import _execute_report
+        repo = MagicMock()
+        repo.update_execution = AsyncMock()
+
+        with (
+            patch("routes.v1.schedules.render_report", new=AsyncMock()) as render_mock,
+            patch("routes.v1.schedules.html_to_pdf_bytes") as pdf_mock,
+            patch("routes.v1.schedules._send_to_lists", new=AsyncMock()) as send_mock,
+        ):
+            await _execute_report(
+                EXECID, _schedule(send_list_ids=[]), repo, MagicMock(), MagicMock(),
+            )
+
+        render_mock.assert_not_awaited()
+        pdf_mock.assert_not_called()
+        send_mock.assert_not_awaited()
+        repo.update_execution.assert_awaited_once()
+        args = repo.update_execution.call_args
+        assert args[0][1].value == "success"
+        assert "No send lists" in args.kwargs["error_message"]
 
 
 # ---------------------------------------------------------------------------

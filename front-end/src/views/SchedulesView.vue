@@ -148,12 +148,14 @@ const downloadingId = ref<string | null>(null)
 async function downloadRender(s: Schedule) {
   if (downloadingId.value) return
   downloadingId.value = s.id
-  const url = `/api/v1/templates/${s.template_id}/render`
   try {
+    const url = `/api/v1/templates/${s.template_id}/render-output?_t=${Date.now()}`
     const response = await AXIOS_INSTANCE.get(url, { responseType: 'blob' })
-    const blob = new Blob([response.data], { type: 'text/html' })
+    const contentType: string = response.headers['content-type'] ?? 'application/octet-stream'
+    const blob = new Blob([response.data], { type: contentType })
     const disposition: string = response.headers['content-disposition'] ?? ''
-    const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? 'report.html'
+    const extension = contentType.includes('pdf') ? '.pdf' : '.html'
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] ?? `report${extension}`
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
     link.download = filename

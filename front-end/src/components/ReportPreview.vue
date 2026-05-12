@@ -41,18 +41,45 @@ function sanitizeCss(css: string): string {
     .replace(/-o-link-source\s*:[^;]+/gi, '')                       // Opera -o-link-source
 }
 
+// Strip top-level `body { ... }`, `html { ... }`, and `body, html { ... }` rules.
+// Used only when @scope is unavailable — without scoping these rules apply to the
+// host app's body/html. More complex selectors (`body .foo`, `.bar html`) are left
+// alone; handling those would need a real CSS parser. TODO: migrate the preview
+// to a shadow-root for proper isolation across all browsers.
+function stripBodyAndHtmlRules(css: string): string {
+  return css.replace(
+    /(^|})\s*(?:body|html)(?:\s*,\s*(?:body|html))*\s*\{[^}]*\}/gi,
+    '$1',
+  )
+}
+
 // Inject template <style> blocks as a real <head> stylesheet so the browser
 // always activates them. v-html / innerHTML injection is not reliable.
 const headStyleEl = document.createElement('style')
 headStyleEl.setAttribute('data-report-preview', '')
 document.head.appendChild(headStyleEl)
 
+// Feature-detect @scope: Chrome 118+ / Safari 17.4+ support it; Firefox does not (as of 2026-05).
+// Detect via CSSScopeRule (the interface for the at-rule itself); CSS.supports('(:scope)') is
+// not a valid condition and CSS.supports('selector(:scope)') only tests the selector, which has
+// been supported far longer than the at-rule. Without the feature, the entire @scope rule is
+// silently dropped — falling back to unscoped CSS preserves the preview at the cost of
+// potentially bleeding template styles (e.g. body { font-size: 10px }) into the host app UI.
+const _SUPPORTS_SCOPE = typeof window !== 'undefined' && 'CSSScopeRule' in window
+
 watchEffect(() => {
   const blocks: string[] = []
   const re = /<style[^>]*>([\s\S]*?)<\/style>/gi
   let m: RegExpExecArray | null
   while ((m = re.exec(props.html)) !== null) blocks.push(m[1])
-  headStyleEl.textContent = sanitizeCss(blocks.join('\n'))
+  const css = sanitizeCss(blocks.join('\n'))
+  if (!css) {
+    headStyleEl.textContent = ''
+    return
+  }
+  headStyleEl.textContent = _SUPPORTS_SCOPE
+    ? `@scope (.report-preview-wrapper) {\n${css}\n}`
+    : stripBodyAndHtmlRules(css)
 })
 
 const previewContainer = ref<HTMLElement | null>(null)
