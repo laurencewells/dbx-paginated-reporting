@@ -215,9 +215,10 @@ async function exportToPdf() {
 
 function downloadHtml() {
   if (!props.templateId) return
+  // Server sets Content-Disposition with the canonical filename; same-origin
+  // browsers honour the response header, so no anchor download attribute needed.
   const a = document.createElement('a')
   a.href = `/api/v1/templates/${props.templateId}/render-output`
-  a.download = `${props.templateName ?? 'report'}.html`
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)

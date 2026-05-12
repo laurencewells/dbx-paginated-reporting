@@ -469,15 +469,25 @@ class TestBuildPdfHtmlDocument:
         result = build_pdf_html_document(full, "ignored")
         assert result == full
 
+    def test_short_circuit_warns_unconditionally(self, caplog):
+        """Short-circuit drops _PDF_STYLES; must warn on every full-doc body."""
+        import logging
+        from services.report_renderer import build_pdf_html_document
+
+        full = '<!DOCTYPE html><html><body>x</body></html>'
+        with caplog.at_level(logging.WARNING):
+            build_pdf_html_document(full, "T", is_markdown=False)
+        assert any("full HTML document" in r.message for r in caplog.records)
+
     def test_short_circuit_warns_when_markdown_flag_set(self, caplog):
-        """Markdown wrapping silently lost on short-circuit — must warn."""
+        """Same warning fires when is_markdown=True — both styling sources are dropped."""
         import logging
         from services.report_renderer import build_pdf_html_document
 
         full = '<!DOCTYPE html><html><body>x</body></html>'
         with caplog.at_level(logging.WARNING):
             build_pdf_html_document(full, "T", is_markdown=True)
-        assert any("markdown" in r.message.lower() for r in caplog.records)
+        assert any("full HTML document" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -1135,6 +1145,95 @@ class TestInlineImages:
             await inline_images(html)
 
         mock_repo.get_data.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_pdf_mode_svg_rasterised_to_png(self):
+        """In PDF mode, SVG payloads are rasterised before the data URI is built."""
+        from services.report_renderer import inline_images
+        import services.report_renderer as rr
+
+        uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        html = f'<img src="img:{uid}" />'
+        svg_b64 = base64.b64encode(b"<svg/>").decode()
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=("image/svg+xml", svg_b64))
+
+        with (
+            patch("repositories.images.ImagesRepository", return_value=mock_repo),
+            patch.object(rr, "vlc") as mock_vlc,
+        ):
+            mock_vlc.svg_to_png.return_value = _make_1x1_png()
+            result = await inline_images(html, pdf_mode=True)
+
+        assert "data:image/png;base64," in result
+        assert "svg+xml" not in result
+
+    @pytest.mark.asyncio
+    async def test_pdf_mode_drops_image_when_svg_rasterise_fails(self):
+        """Failed SVG→PNG must drop the image — never emit data:image/png with SVG bytes."""
+        from services.report_renderer import inline_images
+        import services.report_renderer as rr
+
+        uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        html = f'<img src="img:{uid}" />'
+        svg_b64 = base64.b64encode(b"<svg/>").decode()
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=("image/svg+xml", svg_b64))
+
+        with (
+            patch("repositories.images.ImagesRepository", return_value=mock_repo),
+            patch.object(rr, "vlc") as mock_vlc,
+        ):
+            mock_vlc.svg_to_png.side_effect = RuntimeError("vega failure")
+            result = await inline_images(html, pdf_mode=True)
+
+        # Source must be untouched — no broken data URI, no PNG mime over SVG bytes
+        assert f"img:{uid}" in result
+        assert "data:image/png" not in result
+
+    @pytest.mark.asyncio
+    async def test_non_pdf_mode_svg_left_unrasterised(self):
+        """Without pdf_mode, SVG is kept as-is — browsers and email handle svg+xml fine."""
+        from services.report_renderer import inline_images
+
+        uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        html = f'<img src="img:{uid}" />'
+        svg_b64 = base64.b64encode(b"<svg/>").decode()
+        mock_repo = MagicMock()
+        mock_repo.get_data = AsyncMock(return_value=("image/svg+xml", svg_b64))
+
+        with patch("repositories.images.ImagesRepository", return_value=mock_repo):
+            result = await inline_images(html, pdf_mode=False)
+
+        assert "data:image/svg+xml;base64," in result
+
+
+# ---------------------------------------------------------------------------
+# _pdf_link_callback
+# ---------------------------------------------------------------------------
+
+
+class TestPdfLinkCallback:
+    def test_data_uri_allowed(self):
+        from services.report_renderer import _pdf_link_callback
+
+        uri = "data:image/png;base64,abc=="
+        assert _pdf_link_callback(uri, None) == uri
+
+    def test_http_uri_blocked(self):
+        from services.report_renderer import _pdf_link_callback
+
+        assert _pdf_link_callback("http://internal.example/secret.css", None) == ""
+
+    def test_https_uri_blocked(self):
+        from services.report_renderer import _pdf_link_callback
+
+        assert _pdf_link_callback("https://cdn.example.com/x.css", None) == ""
+
+    def test_file_uri_blocked(self):
+        from services.report_renderer import _pdf_link_callback
+
+        assert _pdf_link_callback("file:///etc/passwd", None) == ""
 
 
 # ---------------------------------------------------------------------------

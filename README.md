@@ -130,7 +130,7 @@ back-end/
     ├── projects.py                 # CRUD /projects + /projects/{id}/shares
     ├── images.py                   # CRUD /images + GET /images/{id}/data (binary serve)
     ├── structures.py               # CRUD /structures + POST /structures/{id}/build
-    ├── templates.py                # CRUD /templates + preview-data/report-data + render-html/render-output
+    ├── templates.py                # CRUD /templates + preview-data + render-output
     ├── discovery.py                # GET /discovery/catalogs/.../tables/.../columns
     ├── agent.py                    # POST /agent/chat, WS /agent/ws
     ├── schedules.py                # CRUD /schedules + executions + manual run trigger

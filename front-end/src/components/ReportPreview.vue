@@ -41,6 +41,18 @@ function sanitizeCss(css: string): string {
     .replace(/-o-link-source\s*:[^;]+/gi, '')                       // Opera -o-link-source
 }
 
+// Strip top-level `body { ... }`, `html { ... }`, and `body, html { ... }` rules.
+// Used only when @scope is unavailable — without scoping these rules apply to the
+// host app's body/html. More complex selectors (`body .foo`, `.bar html`) are left
+// alone; handling those would need a real CSS parser. TODO: migrate the preview
+// to a shadow-root for proper isolation across all browsers.
+function stripBodyAndHtmlRules(css: string): string {
+  return css.replace(
+    /(^|})\s*(?:body|html)(?:\s*,\s*(?:body|html))*\s*\{[^}]*\}/gi,
+    '$1',
+  )
+}
+
 // Inject template <style> blocks as a real <head> stylesheet so the browser
 // always activates them. v-html / innerHTML injection is not reliable.
 const headStyleEl = document.createElement('style')
@@ -66,7 +78,7 @@ watchEffect(() => {
   }
   headStyleEl.textContent = _SUPPORTS_SCOPE
     ? `@scope (.report-preview-wrapper) {\n${css}\n}`
-    : css
+    : stripBodyAndHtmlRules(css)
 })
 
 const previewContainer = ref<HTMLElement | null>(null)

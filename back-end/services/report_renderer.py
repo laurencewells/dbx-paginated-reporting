@@ -26,9 +26,6 @@ from repositories.structures import StructuresRepository
 from repositories.templates import TemplatesRepository
 from services.data_query import DataQueryService
 
-# Re-export so callers/tests can do `from services.report_renderer import CID_DOMAIN`.
-__all__ = ["CID_DOMAIN"]
-
 # Mirrors REPORT_STYLES in PreviewExportModal.vue — keep in sync.
 _REPORT_STYLES = """
   @page { size: A4; margin: 8mm 10mm; }
@@ -498,16 +495,16 @@ def build_pdf_html_document(body: str, title: str, is_markdown: bool = False) ->
     If body is already a full HTML document (has <!DOCTYPE or <html>), it is
     passed through as-is so the template's own @page rules (e.g. landscape
     orientation) are honoured by xhtml2pdf.  Wrapping it would bury the head
-    styles inside <body> where xhtml2pdf ignores them.
+    styles inside <body> where xhtml2pdf ignores them. The short-circuit will
+    be removed once a first-class landscape option lands.
 
     Fragment bodies get wrapped with _PDF_STYLES (CSS 2.1, no flexbox/grid).
     """
     if _FULL_HTML_DOC_RE.match(body):
-        if is_markdown:
-            L.warning(
-                "[ReportRenderer] build_pdf_html_document: body is already a full HTML "
-                "document; is_markdown=True flag will not apply _MARKDOWN_STYLES."
-            )
+        L.warning(
+            "[ReportRenderer] build_pdf_html_document: body is already a full HTML "
+            "document; _PDF_STYLES and is_markdown styling will not be applied."
+        )
         return body
 
     extra_styles = _MARKDOWN_STYLES if is_markdown else ""
@@ -518,6 +515,20 @@ def build_pdf_html_document(body: str, title: str, is_markdown: bool = False) ->
         f'<style>{_PDF_STYLES}{extra_styles}</style>\n'
         f'</head><body>{body}</body></html>'
     )
+
+
+def _pdf_link_callback(uri: str, rel) -> str:
+    """xhtml2pdf resource resolver. Allows only `data:` URIs; blocks everything else.
+
+    Why: templates are user-supplied. xhtml2pdf's default behaviour follows
+    absolute URLs in `<link rel="stylesheet">` and `<img src="...">`, which is
+    an SSRF surface from the renderer's network position. Inlined images use
+    `data:` URIs (see inline_images), so no other schemes need to resolve.
+    """
+    if uri.startswith("data:"):
+        return uri
+    L.warning(f"[ReportRenderer] xhtml2pdf blocked non-data resource URI: {uri[:80]}")
+    return ""
 
 
 def html_to_pdf_bytes(html: str) -> bytes:
@@ -531,7 +542,9 @@ def html_to_pdf_bytes(html: str) -> bytes:
     from xhtml2pdf import pisa
 
     buf = io.BytesIO()
-    result = pisa.pisaDocument(io.StringIO(html), buf, encoding="utf-8")
+    result = pisa.pisaDocument(
+        io.StringIO(html), buf, encoding="utf-8", link_callback=_pdf_link_callback,
+    )
     pdf = buf.getvalue()
     if not pdf.startswith(b"%PDF"):
         raise RuntimeError(
@@ -552,15 +565,11 @@ def _svg_data_b64_to_png_data_b64(svg_b64: str) -> str:
     """Rasterise a base64-encoded SVG to a base64-encoded PNG using vl-convert.
 
     xhtml2pdf cannot process data:image/svg+xml URIs; PNG data URIs work fine.
-    Returns the original svg_b64 unchanged if rasterisation fails.
+    Raises on failure — callers decide whether to drop the image or fall back.
     """
-    try:
-        svg_bytes = base64.b64decode(svg_b64)
-        png_bytes = vlc.svg_to_png(svg_bytes.decode("utf-8"))
-        return base64.b64encode(png_bytes).decode("ascii")
-    except Exception as e:
-        L.warning(f"[ReportRenderer] SVG→PNG rasterisation failed, keeping SVG: {e}")
-        return svg_b64
+    svg_bytes = base64.b64decode(svg_b64)
+    png_bytes = vlc.svg_to_png(svg_bytes.decode("utf-8"))
+    return base64.b64encode(png_bytes).decode("ascii")
 
 
 async def inline_images(html: str, pdf_mode: bool = False) -> str:
@@ -580,7 +589,7 @@ async def inline_images(html: str, pdf_mode: bool = False) -> str:
     if not uuids:
         return html
 
-    L.info(f"[ReportRenderer] inline_images: resolving {len(uuids)} image(s)")
+    L.debug(f"[ReportRenderer] inline_images: resolving {len(uuids)} image(s)")
     repo = ImagesRepository()
     data_map: dict[str, str] = {}
     for uid in uuids:
@@ -590,8 +599,14 @@ async def inline_images(html: str, pdf_mode: bool = False) -> str:
                 mime_type, data_b64 = result
                 if pdf_mode and mime_type == "image/svg+xml":
                     L.debug(f"[ReportRenderer] Rasterising SVG image {uid} to PNG for PDF output")
-                    data_b64 = _svg_data_b64_to_png_data_b64(data_b64)
-                    mime_type = "image/png"
+                    try:
+                        data_b64 = _svg_data_b64_to_png_data_b64(data_b64)
+                        mime_type = "image/png"
+                    except Exception as e:
+                        # Inserting a data:image/png URI with SVG bytes would
+                        # silently break xhtml2pdf — better to drop the image.
+                        L.warning(f"[ReportRenderer] SVG→PNG failed for {uid}; dropping image: {e}")
+                        continue
                 data_map[uid] = f"data:{mime_type};base64,{data_b64}"
                 L.debug(f"[ReportRenderer] Resolved image {uid} ({mime_type})")
             else:

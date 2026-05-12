@@ -6,6 +6,7 @@ in the UI.
 """
 import asyncio
 import os
+import re
 import smtplib
 from email import encoders
 from email.mime.application import MIMEApplication
@@ -16,6 +17,20 @@ from typing import Dict, List, Optional, Tuple
 
 from common.email.base import CID_DOMAIN, EmailProvider
 from common.logger import log as L
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _html_to_plain(html: str) -> str:
+    """Cheap HTML → plain-text fallback for multipart/alternative.
+
+    Spam filters increasingly penalise messages with no text/plain part. We
+    don't need pixel-perfect rendering — a tag-stripped, whitespace-collapsed
+    body is enough to satisfy the heuristic.
+    """
+    text = _TAG_RE.sub(" ", html)
+    return _WHITESPACE_RE.sub(" ", text).strip() or "This message contains HTML content."
 
 try:
     _SMTP_TIMEOUT_SECONDS = int(os.getenv("SMTP_TIMEOUT_SECONDS", "30"))
@@ -46,6 +61,7 @@ class SmtpEmailProvider(EmailProvider):
         html_body: str,
         cid_images: Optional[Dict[str, Tuple[str, bytes]]] = None,
     ) -> None:
+        plain_body = _html_to_plain(html_body)
         if cid_images:
             # multipart/related wraps the HTML alternative + inline image parts
             msg = MIMEMultipart("related")
@@ -53,6 +69,8 @@ class SmtpEmailProvider(EmailProvider):
             msg["From"] = from_email
             msg["To"] = ", ".join(recipients)
             alt = MIMEMultipart("alternative")
+            # RFC 2046: plain part first, HTML second (least-rich first).
+            alt.attach(MIMEText(plain_body, "plain"))
             alt.attach(MIMEText(html_body, "html"))
             msg.attach(alt)
             for uid, (mime_type, image_bytes) in cid_images.items():
@@ -68,6 +86,7 @@ class SmtpEmailProvider(EmailProvider):
             msg["Subject"] = subject
             msg["From"] = from_email
             msg["To"] = ", ".join(recipients)
+            msg.attach(MIMEText(plain_body, "plain"))
             msg.attach(MIMEText(html_body, "html"))
         with self._build_connection() as server:
             server.sendmail(from_email, recipients, msg.as_string())

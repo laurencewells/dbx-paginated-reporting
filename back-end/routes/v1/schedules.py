@@ -1,7 +1,7 @@
 import asyncio
 import os
 import uuid as _uuid
-from typing import List
+from typing import Dict, List, Tuple
 from uuid import UUID
 
 from apscheduler.jobstores.base import JobLookupError
@@ -95,14 +95,17 @@ async def _send_to_one_list(
     send_list,
     smtp_conn,
     html_body: str | None = None,
-    cid_images: dict | None = None,
+    cid_images: Dict[str, Tuple[str, bytes]] | None = None,
     pdf_bytes: bytes | None = None,
     filename: str | None = None,
 ) -> tuple[str, bool]:
     """Send to a single list. Returns (message, has_error).
 
-    Provide pdf_bytes+filename to send a PDF attachment; otherwise html_body is sent inline.
+    Exactly one of pdf_bytes or html_body must be provided.
     """
+    assert (pdf_bytes is None) != (html_body is None), (
+        "_send_to_one_list requires exactly one of pdf_bytes or html_body"
+    )
     try:
         provider = get_provider(smtp_conn)
         subject = f"Scheduled Report: {schedule.name}"
@@ -133,7 +136,7 @@ async def _send_to_lists(
     send_lists_repo: EmailSendListsRepository,
     smtp_repo: SmtpConnectionsRepository,
     html_body: str | None = None,
-    cid_images: dict | None = None,
+    cid_images: Dict[str, Tuple[str, bytes]] | None = None,
     pdf_bytes: bytes | None = None,
     filename: str | None = None,
 ) -> tuple[str, bool]:
@@ -177,6 +180,14 @@ async def _execute_report(
     smtp_repo: SmtpConnectionsRepository,
 ) -> None:
     """Core report execution logic — called inside a timeout wrapper."""
+    if not schedule.send_list_ids:
+        # PDF rendering is expensive; skip the whole pipeline when there's nowhere to send.
+        await repo.update_execution(
+            execution_id, ExecutionStatus.success, error_message="No send lists configured",
+        )
+        L.info(f"[Scheduler] Execution {execution_id} skipped — no send lists configured")
+        return
+
     html_body, template = await render_report(schedule.template_id)
     is_markdown = template.template_type == "markdown"
 

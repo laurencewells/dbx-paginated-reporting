@@ -34,6 +34,7 @@ def _schedule(
     name: str = "Daily Report",
     is_active: bool = True,
     cron_expression: str = "0 9 * * 1",
+    send_list_ids: list[uuid.UUID] | None = None,
 ) -> Schedule:
     return Schedule(
         id=id or SCHID,
@@ -43,6 +44,7 @@ def _schedule(
         template_id=TID,
         cron_expression=cron_expression,
         is_active=is_active,
+        send_list_ids=send_list_ids if send_list_ids is not None else [uuid.uuid4()],
         created_by="user@example.com",
         created_at=NOW,
         updated_at=NOW,
@@ -709,6 +711,21 @@ class TestSendToOneList:
         assert has_error is True
         assert "Email failed" in msg
 
+    @pytest.mark.asyncio
+    async def test_rejects_neither_html_nor_pdf(self):
+        from routes.v1.schedules import _send_to_one_list
+        with pytest.raises(AssertionError):
+            await _send_to_one_list(_schedule(), _send_list(), _smtp_conn())
+
+    @pytest.mark.asyncio
+    async def test_rejects_both_html_and_pdf(self):
+        from routes.v1.schedules import _send_to_one_list
+        with pytest.raises(AssertionError):
+            await _send_to_one_list(
+                _schedule(), _send_list(), _smtp_conn(),
+                html_body="<p>x</p>", pdf_bytes=b"%PDF",
+            )
+
 
 # ---------------------------------------------------------------------------
 # _send_to_lists
@@ -719,7 +736,7 @@ class TestSendToLists:
     @pytest.mark.asyncio
     async def test_returns_empty_string_when_no_send_list_ids(self):
         from routes.v1.schedules import _send_to_lists
-        schedule = _schedule()  # has no send_list_ids
+        schedule = _schedule(send_list_ids=[])
         send_lists_repo = MagicMock()
         smtp_repo = MagicMock()
         msg, has_failures = await _send_to_lists(schedule, send_lists_repo, smtp_repo, html_body="<p>x</p>")
@@ -854,6 +871,30 @@ class TestExecuteReport:
 
         args = repo.update_execution.call_args
         assert args[0][1].value == "failed"
+
+    @pytest.mark.asyncio
+    async def test_skips_render_when_no_send_lists(self):
+        """No recipients = no rendering. PDF generation is expensive; skip the whole pipeline."""
+        from routes.v1.schedules import _execute_report
+        repo = MagicMock()
+        repo.update_execution = AsyncMock()
+
+        with (
+            patch("routes.v1.schedules.render_report", new=AsyncMock()) as render_mock,
+            patch("routes.v1.schedules.html_to_pdf_bytes") as pdf_mock,
+            patch("routes.v1.schedules._send_to_lists", new=AsyncMock()) as send_mock,
+        ):
+            await _execute_report(
+                EXECID, _schedule(send_list_ids=[]), repo, MagicMock(), MagicMock(),
+            )
+
+        render_mock.assert_not_awaited()
+        pdf_mock.assert_not_called()
+        send_mock.assert_not_awaited()
+        repo.update_execution.assert_awaited_once()
+        args = repo.update_execution.call_args
+        assert args[0][1].value == "success"
+        assert "No send lists" in args.kwargs["error_message"]
 
 
 # ---------------------------------------------------------------------------
