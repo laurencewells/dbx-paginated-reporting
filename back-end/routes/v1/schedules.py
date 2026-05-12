@@ -181,7 +181,7 @@ async def _execute_report(
     is_markdown = template.template_type == "markdown"
 
     if template.page_size == "A4":
-        body = render_charts_for_pdf(html_body or "")
+        body = await asyncio.to_thread(render_charts_for_pdf, html_body or "")
         body = await inline_images(body, pdf_mode=True)
         full_html = build_pdf_html_document(body, template.name, is_markdown=is_markdown)
         pdf_bytes = await asyncio.to_thread(html_to_pdf_bytes, full_html)
@@ -190,7 +190,7 @@ async def _execute_report(
             pdf_bytes=pdf_bytes, filename=f"{template.name}.pdf",
         )
     else:
-        body = render_charts_as_svg(html_body or "")
+        body = await asyncio.to_thread(render_charts_as_svg, html_body or "")
         body, cid_images = await collect_images_for_email(body)
         full_html = build_email_html_document(body, template.name, is_markdown=is_markdown)
         email_summary, email_failures = await _send_to_lists(

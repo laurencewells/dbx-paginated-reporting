@@ -213,21 +213,14 @@ async function exportToPdf() {
   }
 }
 
-async function downloadHtml() {
+function downloadHtml() {
   if (!props.templateId) return
-  exporting.value = true
-  try {
-    const a = document.createElement('a')
-    a.href = `/api/v1/templates/${props.templateId}/render`
-    a.download = `${props.templateName ?? 'report'}.html`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-  } catch {
-    toastStore.error('Failed to download HTML')
-  } finally {
-    exporting.value = false
-  }
+  const a = document.createElement('a')
+  a.href = `/api/v1/templates/${props.templateId}/render-output`
+  a.download = `${props.templateName ?? 'report'}.html`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
 }
 </script>
 
@@ -277,11 +270,10 @@ async function downloadHtml() {
               v-else
               class="btn btn-outline-secondary btn-sm"
               @click="downloadHtml"
-              :disabled="!templateId || exporting || loadingData"
+              :disabled="!templateId || loadingData"
             >
-              <span v-if="exporting" class="spinner-border spinner-border-sm me-1" role="status"></span>
-              <i v-else class="bi bi-file-earmark-code me-1"></i>
-              {{ exporting ? 'Downloading…' : 'Download HTML' }}
+              <i class="bi bi-file-earmark-code me-1"></i>
+              Download HTML
             </button>
             <button class="btn btn-outline-secondary btn-sm" @click="emit('update:show', false)" title="Close">
               <i class="bi bi-x-lg"></i>

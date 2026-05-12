@@ -3,7 +3,7 @@ import asyncio
 import base64 as _base64
 from typing import Dict, List, Optional, Tuple
 
-from common.email.base import EmailProvider
+from common.email.base import CID_DOMAIN, EmailProvider
 from common.logger import log as L
 
 
@@ -31,14 +31,19 @@ class SendGridEmailProvider(EmailProvider):
             html_content=html_body,
         )
         if cid_images:
-            for uid, (mime_type, image_bytes) in cid_images.items():
-                message.attachment = Attachment(
+            # Build the list once and assign — the per-iteration setter trick
+            # depends on sendgrid-python appending under the hood, which is
+            # undocumented and fragile.
+            message.attachment = [
+                Attachment(
                     FileContent(_base64.b64encode(image_bytes).decode()),
                     FileName(uid),
                     FileType(mime_type),
                     Disposition("inline"),
-                    ContentId(f"{uid}@report"),
+                    ContentId(f"{uid}@{CID_DOMAIN}"),
                 )
+                for uid, (mime_type, image_bytes) in cid_images.items()
+            ]
         response = SendGridAPIClient(self._api_key).send(message)
         if response.status_code >= 400:
             raise RuntimeError(f"SendGrid API error {response.status_code}: {response.body}")

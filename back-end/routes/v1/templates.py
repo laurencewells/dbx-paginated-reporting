@@ -139,39 +139,6 @@ def _safe_filename(name: str) -> str:
     return re.sub(r'[^\w\-.]', '_', name).strip('_') or "report"
 
 
-@router.get("/{template_id}/render")
-async def render_template_html(
-    template_id: UUID,
-    email: CurrentUser,
-    repo: TemplatesRepo,
-    structures_repo: StructuresRepo,
-    projects_repo: ProjectsRepo,
-):
-    """Server-side render to HTML — for testing scheduled output."""
-    await check_template_read_access(template_id, email, repo, structures_repo, projects_repo)
-    try:
-        from services.report_renderer import build_email_html_document, inline_images, render_charts_as_svg, render_report
-        body, template = await render_report(template_id)
-        body = render_charts_as_svg(body)
-        body = await inline_images(body)
-        is_markdown = template.template_type == "markdown"
-        html = build_email_html_document(body, template.name, is_markdown=is_markdown)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    filename = _safe_filename(template.name) + ".html"
-    return Response(
-        content=html,
-        media_type="text/html",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "Cache-Control": "no-store",
-        },
-    )
-
-
-
 @router.get("/{template_id}/render-output")
 async def render_template_output(
     template_id: UUID,
@@ -180,7 +147,11 @@ async def render_template_output(
     structures_repo: StructuresRepo,
     projects_repo: ProjectsRepo,
 ):
-    """Render the template to its configured format (PDF for A4, HTML for email) in one call."""
+    """Render the template to its configured format: PDF for A4, self-contained HTML for email.
+
+    This is the single download endpoint. Frontend dispatches on the response's
+    Content-Type / Content-Disposition rather than picking an endpoint up-front.
+    """
     await check_template_read_access(template_id, email, repo, structures_repo, projects_repo)
     try:
         from services.report_renderer import (
@@ -195,7 +166,7 @@ async def render_template_output(
         body, template = await render_report(template_id)
         is_markdown = template.template_type == "markdown"
         if template.page_size == "A4":
-            body = render_charts_for_pdf(body or "")
+            body = await asyncio.to_thread(render_charts_for_pdf, body or "")
             body = await inline_images(body, pdf_mode=True)
             html = build_pdf_html_document(body, template.name, is_markdown=is_markdown)
             pdf_bytes = await asyncio.to_thread(html_to_pdf_bytes, html)
@@ -209,7 +180,7 @@ async def render_template_output(
                 },
             )
         else:
-            body = render_charts_as_svg(body or "")
+            body = await asyncio.to_thread(render_charts_as_svg, body or "")
             body = await inline_images(body)
             html = build_email_html_document(body, template.name, is_markdown=is_markdown)
             filename = _safe_filename(template.name) + ".html"

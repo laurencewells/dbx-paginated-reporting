@@ -61,8 +61,12 @@ async function handleFiles(files: FileList | null) {
   isUploading.value = true
   try {
     for (const file of Array.from(files)) {
+      // The orval-generated BodyUploadImageApiV1ImagesPost types `file` as string,
+      // but the OpenAPI spec describes a multipart binary upload and the runtime
+      // axios client sends FormData containing a File. Cast is required until
+      // orval gains better multipart handling.
       await uploadMutation({
-        data: { file },
+        data: { file: file as unknown as string },
         params: { project_id: projectId.value },
       })
     }

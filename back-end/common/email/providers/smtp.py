@@ -14,7 +14,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Dict, List, Optional, Tuple
 
-from common.email.base import EmailProvider
+from common.email.base import CID_DOMAIN, EmailProvider
 from common.logger import log as L
 
 try:
@@ -60,7 +60,7 @@ class SmtpEmailProvider(EmailProvider):
                 img_part = MIMEBase(maintype, subtype)
                 img_part.set_payload(image_bytes)
                 encoders.encode_base64(img_part)
-                img_part.add_header("Content-ID", f"<{uid}@report>")
+                img_part.add_header("Content-ID", f"<{uid}@{CID_DOMAIN}>")
                 img_part.add_header("Content-Disposition", "inline")
                 msg.attach(img_part)
         else:

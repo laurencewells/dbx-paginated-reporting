@@ -2,20 +2,28 @@
 Unit tests for services/report_renderer.py.
 
 All external dependencies (repos, DataQueryService, chevron) are mocked.
+Fixtures live in back-end/tests/fixtures/ — fully synthetic, no customer data.
 """
 from __future__ import annotations
 
 import base64
 import importlib.util
-import re as _re
 import struct
 import uuid
 import zlib
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from tests.fixtures.synthetic_data import (
+    KPI_ROWS,
+    KPI_TEMPLATE,
+    LOGO_UUID,
+    SUPPLIER_ROWS,
+    SUPPLIER_TEMPLATE,
+    kpi_context_with_first,
+)
 
 _XHTML2PDF_AVAILABLE = importlib.util.find_spec("xhtml2pdf") is not None
 requires_xhtml2pdf = pytest.mark.skipif(
@@ -27,13 +35,6 @@ from models.structure import Structure, StructureTable
 from models.template import Template
 
 NOW = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-# ---------------------------------------------------------------------------
-# Shared helpers — PNG factory and template fixtures
-# ---------------------------------------------------------------------------
-
-_PROJECT_ROOT = Path(__file__).parents[4]
-_LOGO_UUID = "4a8af897-cd59-4e3e-9d92-24acaaa9d755"
 
 
 def _make_1x1_png() -> bytes:
@@ -50,86 +51,6 @@ def _make_1x1_png() -> bytes:
     )
 
 
-# Supplier template (body-only — already ready to use directly)
-_SUPPLIER_BODY = (_PROJECT_ROOT / "examples" / "template.html").read_text()
-
-# KPI template — lives in example_Testing/ which is gitignored; skip KPI tests on clean checkouts.
-_KPI_TEMPLATE_PATH = _PROJECT_ROOT / "example_Testing" / "kpi_report_template.html"
-_kpi_template_available = _KPI_TEMPLATE_PATH.exists()
-requires_kpi_template = pytest.mark.skipif(
-    not _kpi_template_available,
-    reason="example_Testing/kpi_report_template.html not present (gitignored — provide locally to run KPI tests)",
-)
-if _kpi_template_available:
-    _kpi_html_full = _KPI_TEMPLATE_PATH.read_text()
-    _kpi_body_m = _re.search(r'<body[^>]*>(.*?)</body>', _kpi_html_full, _re.DOTALL | _re.IGNORECASE)
-    _KPI_BODY = _kpi_body_m.group(1).strip() if _kpi_body_m else _kpi_html_full
-else:
-    _KPI_BODY = ""
-
-# Dummy rows matching the KPI template's Mustache variables
-_KPI_ROWS = [
-    {   # Section-header row: Metric is empty so {{^Metric}} renders it as a group heading
-        "Section": "REVENUE", "Metric": "",
-        "MaxReportedDate": "2024-01-31",
-        "YDA": "", "MTD": "", "MTD_Budget": "", "PMTD": "", "LYMTD": "",
-        "YTD": "", "YTD_Budget": "", "LYTD": "",
-        "YDA_color_class": "", "MTD_color_arrow": "", "MTD_color_class": "", "MTD_arrow": "",
-        "vs_PMTD_color_class": "", "MTD_vs_PMTD": "",
-        "vs_LYMTD_color_class": "", "MTD_vs_LYMTD": "",
-        "YTD_color_class": "", "vs_LYTD_color_class": "", "YTD_vs_LYTD": "",
-    },
-    {   # Data row: Metric is set so {{#Metric}} renders the numbers
-        "Section": "", "Metric": "Net Revenue",
-        "MaxReportedDate": "2024-01-31",
-        "YDA": "€850K", "MTD": "€720K", "MTD_Budget": "€700K", "PMTD": "€680K",
-        "LYMTD": "€650K", "YTD": "€8.5M", "YTD_Budget": "€8.4M", "LYTD": "€8.1M",
-        "YDA_color_class": "var-positive", "MTD_color_arrow": "var-positive",
-        "MTD_color_class": "var-positive", "MTD_arrow": "↑",
-        "vs_PMTD_color_class": "var-positive", "MTD_vs_PMTD": "+5.9%",
-        "vs_LYMTD_color_class": "var-positive", "MTD_vs_LYMTD": "+10.8%",
-        "YTD_color_class": "var-positive", "vs_LYTD_color_class": "var-positive",
-        "YTD_vs_LYTD": "+4.9%",
-    },
-]
-
-# Full Mustache context as produced by DataQueryService._map_results_to_data
-_KPI_CONTEXT = {
-    "rows": [dict(row, _index=i + 1, _total=len(_KPI_ROWS), _even=(i % 2 == 1))
-             for i, row in enumerate(_KPI_ROWS)],
-    "_first": {k: v for k, v in _KPI_ROWS[0].items() if k not in ("_index", "_total", "_even")},
-}
-
-# Dummy rows matching the supplier template's Mustache variables
-_SUPPLIER_ROWS = [
-    {
-        "_index": 1, "_total": 2,
-        "supplier_name": "ACME Corp",
-        "supplierID": "S001",
-        "supplier_continent": "Europe",
-        "supplier_city": "London",
-        "total_transactions": 1250,
-        "total_sales_amount": 487500,
-        "top_5_customers": [
-            {"customer_name": "Widget Co", "transactions": 200, "amount": 85000},
-            {"customer_name": "Gadget Inc", "transactions": 180, "amount": 72000},
-        ],
-        "top_3_products": [
-            {"product": "Widget A", "transactions": 400, "amount": 160000},
-        ],
-    },
-    {
-        "_index": 2, "_total": 2,
-        "supplier_name": "Global Trade Ltd",
-        "supplierID": "S002",
-        "supplier_continent": "Asia",
-        "supplier_city": "Tokyo",
-        "total_transactions": 980,
-        "total_sales_amount": 392000,
-        "top_5_customers": [],
-        "top_3_products": [],
-    },
-]
 TID = uuid.uuid4()
 SID = uuid.uuid4()
 PID = uuid.uuid4()
@@ -301,7 +222,7 @@ class TestRenderReport:
             patch("services.report_renderer.SQLConnector"),
         ):
             from services.report_renderer import render_report
-            await render_report(TID)  # noqa: F841 — testing side-effects
+            await render_report(TID)
 
         mock_svc.execute_for_preview.assert_awaited_once_with(TID, limit=10000)
 
@@ -344,7 +265,7 @@ class TestRenderChartsAsSvg:
         result = render_charts_as_svg(html)
         assert '<svg' in result
         assert 'report-bar-chart' in result
-        assert '<rect' in result  # bars
+        assert '<rect' in result
 
     def test_pie_chart_div_replaced_with_svg(self):
         from services.report_renderer import render_charts_as_svg
@@ -353,7 +274,7 @@ class TestRenderChartsAsSvg:
         result = render_charts_as_svg(html)
         assert '<svg' in result
         assert 'report-pie-chart' in result
-        assert '<path' in result  # pie slices
+        assert '<path' in result
 
     def test_missing_data_attributes_returns_div_unchanged(self):
         from services.report_renderer import render_charts_as_svg
@@ -391,7 +312,6 @@ class TestRenderChartsAsSvg:
     def test_bracket_stripped_from_data_attributes(self):
         from services.report_renderer import render_charts_as_svg
 
-        # Labels with surrounding brackets must still render
         html = '<div class="report-bar-chart" data-labels="[X,Y,Z]" data-values="[10,20,30]"></div>'
         result = render_charts_as_svg(html)
         assert 'X' in result
@@ -437,7 +357,6 @@ class TestRenderChartsAsSvg:
     def test_markdown_template_charts_render(self):
         from services.report_renderer import render_charts_as_svg
 
-        # Charts inside markdown-rendered HTML (inline HTML passthrough) must render identically
         html = (
             '<div class="markdown-body">'
             '<div class="report-bar-chart" data-labels="Jan,Feb" data-values="100,200"></div>'
@@ -542,6 +461,24 @@ class TestBuildPdfHtmlDocument:
         result = build_pdf_html_document("", "T", is_markdown=False)
         assert "markdown-body" not in result
 
+    def test_short_circuit_on_full_html_doc(self):
+        """If body is already a full HTML doc, it should be returned as-is."""
+        from services.report_renderer import build_pdf_html_document
+
+        full = '<!DOCTYPE html><html><head><title>X</title></head><body>BODY</body></html>'
+        result = build_pdf_html_document(full, "ignored")
+        assert result == full
+
+    def test_short_circuit_warns_when_markdown_flag_set(self, caplog):
+        """Markdown wrapping silently lost on short-circuit — must warn."""
+        import logging
+        from services.report_renderer import build_pdf_html_document
+
+        full = '<!DOCTYPE html><html><body>x</body></html>'
+        with caplog.at_level(logging.WARNING):
+            build_pdf_html_document(full, "T", is_markdown=True)
+        assert any("markdown" in r.message.lower() for r in caplog.records)
+
 
 # ---------------------------------------------------------------------------
 # html_to_pdf_bytes
@@ -579,6 +516,39 @@ class TestHtmlToPdfBytes:
             "if this fails, xhtml2pdf is silently dropping data: URI images"
         )
 
+    def test_returns_pdf_when_pisa_reports_nonfatal_errors(self, caplog):
+        """pisa.err is a warning count, not a fatal flag — must not raise when buffer is valid."""
+        import io
+        import logging
+        from services.report_renderer import html_to_pdf_bytes
+
+        fake_result = MagicMock()
+        fake_result.err = 5  # parser logged 5 non-fatal issues
+
+        def fake_pisa_document(src, dest, encoding):
+            dest.write(b'%PDF-1.4\n%fake pdf content\n')
+            return fake_result
+
+        with patch("xhtml2pdf.pisa.pisaDocument", side_effect=fake_pisa_document):
+            with caplog.at_level(logging.WARNING):
+                pdf = html_to_pdf_bytes("<html></html>")
+        assert pdf.startswith(b'%PDF')
+        assert any("5" in r.message and "non-fatal" in r.message.lower() for r in caplog.records)
+
+    def test_raises_when_buffer_is_empty(self):
+        """If xhtml2pdf produces no PDF bytes at all, that is a real failure."""
+        from services.report_renderer import html_to_pdf_bytes
+
+        fake_result = MagicMock()
+        fake_result.err = 1
+
+        def fake_pisa_document(src, dest, encoding):
+            return fake_result  # writes nothing
+
+        with patch("xhtml2pdf.pisa.pisaDocument", side_effect=fake_pisa_document):
+            with pytest.raises(RuntimeError, match="invalid"):
+                html_to_pdf_bytes("<html></html>")
+
 
 # ---------------------------------------------------------------------------
 # Full PDF pipeline — supplier template
@@ -590,7 +560,7 @@ class TestPdfPipelineSupplierTemplate:
         import chevron
         from services.report_renderer import render_charts_for_pdf
 
-        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+        rendered = chevron.render(SUPPLIER_TEMPLATE, {"rows": SUPPLIER_ROWS})
         result = render_charts_for_pdf(rendered)
 
         assert 'report-bar-chart' not in result
@@ -600,7 +570,7 @@ class TestPdfPipelineSupplierTemplate:
         import chevron
         from services.report_renderer import render_charts_for_pdf
 
-        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+        rendered = chevron.render(SUPPLIER_TEMPLATE, {"rows": SUPPLIER_ROWS})
         rendered = render_charts_for_pdf(rendered)
 
         assert "ACME Corp" in rendered
@@ -617,21 +587,21 @@ class TestPdfPipelineSupplierTemplate:
             render_charts_for_pdf,
         )
 
-        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+        rendered = chevron.render(SUPPLIER_TEMPLATE, {"rows": SUPPLIER_ROWS})
         rendered = render_charts_for_pdf(rendered)
-        rendered = await inline_images(rendered)   # no img: refs in supplier template
+        rendered = await inline_images(rendered)
         html = build_pdf_html_document(rendered, "Supplier Summary Report")
         pdf = html_to_pdf_bytes(html)
 
         assert pdf.startswith(b'%PDF')
-        assert len(pdf) > 5_000  # non-trivial output
+        assert len(pdf) > 5_000
 
     @pytest.mark.asyncio
     async def test_nested_customer_and_product_rows_render(self):
         import chevron
         from services.report_renderer import render_charts_for_pdf
 
-        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+        rendered = chevron.render(SUPPLIER_TEMPLATE, {"rows": SUPPLIER_ROWS})
         rendered = render_charts_for_pdf(rendered)
 
         assert "Widget Co" in rendered
@@ -641,7 +611,7 @@ class TestPdfPipelineSupplierTemplate:
     async def test_empty_nested_arrays_render_fallback_message(self):
         import chevron
 
-        rendered = chevron.render(_SUPPLIER_BODY, {"rows": _SUPPLIER_ROWS})
+        rendered = chevron.render(SUPPLIER_TEMPLATE, {"rows": SUPPLIER_ROWS})
 
         # Global Trade Ltd has empty top_5_customers and top_3_products
         assert "No customer data available" in rendered
@@ -649,11 +619,10 @@ class TestPdfPipelineSupplierTemplate:
 
 
 # ---------------------------------------------------------------------------
-# Full PDF pipeline — KPI template
+# Full PDF pipeline — synthetic KPI template
 # ---------------------------------------------------------------------------
 
 
-@requires_kpi_template
 class TestPdfPipelineKpiTemplate:
     @requires_xhtml2pdf
     @pytest.mark.asyncio
@@ -664,13 +633,15 @@ class TestPdfPipelineKpiTemplate:
             build_pdf_html_document,
             inline_images,
             render_charts_for_pdf,
+            process_layout_magic,
         )
 
         png_b64 = base64.b64encode(_make_1x1_png()).decode()
         mock_repo = MagicMock()
         mock_repo.get_data = AsyncMock(return_value=("image/png", png_b64))
 
-        rendered = chevron.render(_KPI_BODY, {"rows": _KPI_ROWS})
+        rendered = chevron.render(KPI_TEMPLATE, kpi_context_with_first())
+        rendered = process_layout_magic(rendered)
         rendered = render_charts_for_pdf(rendered)
         with patch("repositories.images.ImagesRepository", return_value=mock_repo):
             rendered = await inline_images(rendered)
@@ -689,12 +660,12 @@ class TestPdfPipelineKpiTemplate:
         mock_repo = MagicMock()
         mock_repo.get_data = AsyncMock(return_value=("image/png", png_b64))
 
-        rendered = chevron.render(_KPI_BODY, {"rows": _KPI_ROWS})
+        rendered = chevron.render(KPI_TEMPLATE, {"rows": KPI_ROWS})
         rendered = render_charts_for_pdf(rendered)
         with patch("repositories.images.ImagesRepository", return_value=mock_repo):
             result = await inline_images(rendered)
 
-        assert f"img:{_LOGO_UUID}" not in result
+        assert f"img:{LOGO_UUID}" not in result
         assert "data:image/png;base64," in result
 
     @requires_xhtml2pdf
@@ -715,7 +686,7 @@ class TestPdfPipelineKpiTemplate:
         mock_not_found = MagicMock()
         mock_not_found.get_data = AsyncMock(return_value=None)
 
-        base_rendered = render_charts_for_pdf(chevron.render(_KPI_BODY, {"rows": _KPI_ROWS}))
+        base_rendered = render_charts_for_pdf(chevron.render(KPI_TEMPLATE, {"rows": KPI_ROWS}))
 
         with patch("repositories.images.ImagesRepository", return_value=mock_not_found):
             body_no_img = await inline_images(base_rendered)
@@ -732,58 +703,59 @@ class TestPdfPipelineKpiTemplate:
         )
 
     @pytest.mark.asyncio
-    async def test_date_subtitle_rendered_from_row_data(self):
+    async def test_first_scalar_rendered_from_row_data(self):
+        """{{#_first}}{{report_date}}{{/_first}} resolves against DataQueryService._first."""
         import chevron
         from services.report_renderer import inline_images, render_charts_for_pdf
 
         mock_repo = MagicMock()
         mock_repo.get_data = AsyncMock(return_value=None)
 
-        rendered = chevron.render(_KPI_BODY, _KPI_CONTEXT)
+        rendered = chevron.render(KPI_TEMPLATE, kpi_context_with_first())
         rendered = render_charts_for_pdf(rendered)
         with patch("repositories.images.ImagesRepository", return_value=mock_repo):
             rendered = await inline_images(rendered)
 
-        assert "2024-01-31" in rendered
+        assert "2026-04-30" in rendered  # report_date from KPI_ROWS[0]
 
     @pytest.mark.asyncio
-    async def test_date_subtitle_absent_when_field_missing(self):
+    async def test_first_subtitle_absent_when_field_missing(self):
+        """If report_date is missing from _first, the {{#_first}}{{report_date}}{{/_first}} block renders empty."""
         import chevron
         from services.report_renderer import inline_images, render_charts_for_pdf
 
-        rows_no_date = [
-            {k: v for k, v in row.items() if k != "MaxReportedDate"} for row in _KPI_ROWS
-        ]
-        context_no_date = {
-            "rows": rows_no_date,
-            "_first": {k: v for k, v in rows_no_date[0].items() if k not in ("_index", "_total")},
-        }
+        ctx = kpi_context_with_first()
+        ctx["_first"].pop("report_date", None)
+        for row in ctx["rows"]:
+            row.pop("report_date", None)
+
         mock_repo = MagicMock()
         mock_repo.get_data = AsyncMock(return_value=None)
 
-        rendered = chevron.render(_KPI_BODY, context_no_date)
+        rendered = chevron.render(KPI_TEMPLATE, ctx)
         rendered = render_charts_for_pdf(rendered)
         with patch("repositories.images.ImagesRepository", return_value=mock_repo):
             rendered = await inline_images(rendered)
 
-        assert "2024-01-31" not in rendered
+        assert "2026-04-30" not in rendered
 
     def test_section_headers_render_without_metric_row(self):
+        """{{^metric_name}} renders only when metric_name is falsy — section header rows."""
         import chevron
 
-        rendered = chevron.render(_KPI_BODY, {"rows": _KPI_ROWS})
+        rendered = chevron.render(KPI_TEMPLATE, {"rows": KPI_ROWS})
 
-        assert "REVENUE" in rendered
-        assert "Net Revenue" in rendered
+        assert "REVENUE" in rendered          # section header (metric_name="")
+        assert "Net Revenue" in rendered      # data row (metric_name="Net Revenue")
 
     def test_kpi_values_present_in_rendered_body(self):
         import chevron
 
-        rendered = chevron.render(_KPI_BODY, {"rows": _KPI_ROWS})
+        rendered = chevron.render(KPI_TEMPLATE, {"rows": KPI_ROWS})
 
-        assert "€720K" in rendered   # MTD value
-        assert "€8.5M" in rendered   # YTD value
-        assert "+5.9%" in rendered   # variance
+        assert "$720K" in rendered            # current_value
+        assert "+5.9%" in rendered            # vs_prior_pct on Net Revenue row
+        assert "Gross Margin" in rendered     # 2nd data row
 
 
 # ---------------------------------------------------------------------------
@@ -802,7 +774,6 @@ class TestInjectGlobalHeaderFooter:
         result = process_layout_magic(html)
         assert result.count("HDR") == 1
         assert "<p>Content</p>" in result
-        # header appears inside the page div
         assert result.index("HDR") > result.index('<div class="report-page">')
 
     def test_footer_cloned_into_report_page(self):
@@ -853,7 +824,6 @@ class TestInjectGlobalHeaderFooter:
             '<div class="report-page">PAGE</div>'
         )
         result = process_layout_magic(html)
-        # HDR should not appear before the report-page open tag
         page_start = result.index('<div class="report-page">')
         hdr_pos = result.index("HDR")
         assert hdr_pos > page_start
@@ -874,19 +844,17 @@ class TestApplyBreakAfter:
             "</div>"
         )
         result = process_layout_magic(html)
-        assert result.count('class="page-break"') == 1  # after 2nd child; no trailing break
+        assert result.count('class="page-break"') == 1
 
     def test_no_trailing_break_on_last_group(self):
         from services.report_renderer import process_layout_magic
 
-        # 4 items, break-after=2 → break after item 2 only (item 4 is the last)
         html = (
             '<div data-break-after="2">'
             "<div>1</div><div>2</div><div>3</div><div>4</div>"
             "</div>"
         )
         result = process_layout_magic(html)
-        # Trailing break removed — only 1 break between groups
         assert result.count('class="page-break"') == 1
 
     def test_three_full_groups_produces_two_breaks(self):
@@ -900,7 +868,6 @@ class TestApplyBreakAfter:
             "</div>"
         )
         result = process_layout_magic(html)
-        # 3 full groups of 2 → breaks after group 1 and group 2 (last group has no trailing break)
         assert result.count('class="page-break"') == 2
 
     def test_data_break_after_attr_removed_from_wrapper(self):
@@ -922,7 +889,6 @@ class TestApplyBreakAfter:
 
         html = '<div data-break-after="0"><div>A</div></div>'
         result = process_layout_magic(html)
-        # n=0 is skipped; the div is left unchanged
         assert "data-break-after" in result
 
 
@@ -1008,7 +974,6 @@ class TestBuildEmailHtmlDocument:
 
         result = build_email_html_document("<p>Body</p>", "My Report")
         assert result.startswith("<!DOCTYPE html>") or "<html" in result
-        # css-inline adds style="" attributes so the bare tag won't match; check text content
         assert "Body" in result
 
     def test_title_embedded(self):
@@ -1020,7 +985,6 @@ class TestBuildEmailHtmlDocument:
     def test_bootstrap_utilities_are_inlined(self):
         from services.report_renderer import build_email_html_document
 
-        # text-muted maps to color:#6c757d in Bootstrap — inlining should produce a style attr
         body = '<span class="text-muted">hint</span>'
         result = build_email_html_document(body, "T")
         assert "style=" in result
@@ -1035,10 +999,8 @@ class TestBuildEmailHtmlDocument:
     def test_markdown_styles_included_when_flag_set(self):
         from services.report_renderer import build_email_html_document
 
-        # css-inline inlines rules onto matching elements; pass a .markdown-body div
-        # so the line-height rule from _MARKDOWN_STYLES gets applied
         result = build_email_html_document('<div class="markdown-body"><p>hi</p></div>', "T", is_markdown=True)
-        assert "1.7" in result  # line-height: 1.7 from _MARKDOWN_STYLES
+        assert "1.7" in result  # line-height from _MARKDOWN_STYLES
 
     def test_no_markdown_styles_by_default(self):
         from services.report_renderer import build_email_html_document
@@ -1066,15 +1028,15 @@ class TestBootstrapCssSingleton:
 
         css = rr._bootstrap_css()
         assert isinstance(css, str)
-        assert len(css) > 10_000  # Bootstrap minified is ~230 KB
+        assert len(css) > 10_000
 
     def test_cached_on_second_call(self):
         import services.report_renderer as rr
 
-        rr._bootstrap_css_cache = None  # reset
+        rr._bootstrap_css_cache = None
         first = rr._bootstrap_css()
         second = rr._bootstrap_css()
-        assert first is second  # same object — cached
+        assert first is second
 
     def test_cache_populated_after_call(self):
         import services.report_renderer as rr
@@ -1087,11 +1049,10 @@ class TestBootstrapCssSingleton:
         import services.report_renderer as rr
 
         rr._bootstrap_css_cache = None
-        # Point the module file to a tmp dir that has no vendor/ subdir
         monkeypatch.setattr(rr, "__file__", str(tmp_path / "report_renderer.py"))
         with pytest.raises(FileNotFoundError):
             rr._bootstrap_css()
-        rr._bootstrap_css_cache = None  # clean up so other tests aren't affected
+        rr._bootstrap_css_cache = None
 
 
 # ---------------------------------------------------------------------------
@@ -1103,7 +1064,6 @@ class TestRenderChartsAsSvgEdgeCases:
     def test_empty_labels_after_strip_returns_div_unchanged(self):
         from services.report_renderer import render_charts_as_svg
 
-        # All label entries are blank after stripping
         html = '<div class="report-bar-chart" data-labels="  ,  " data-values="10,20"></div>'
         result = render_charts_as_svg(html)
         assert result == html
@@ -1194,8 +1154,7 @@ class TestCollectImagesForEmail:
 
     @pytest.mark.asyncio
     async def test_rewrites_src_to_cid_reference(self):
-        import base64
-        from services.report_renderer import collect_images_for_email
+        from services.report_renderer import CID_DOMAIN, collect_images_for_email
 
         uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         html = f'<img src="img:{uid}" alt="logo" />'
@@ -1206,7 +1165,7 @@ class TestCollectImagesForEmail:
         with patch("repositories.images.ImagesRepository", return_value=mock_repo):
             result_html, images = await collect_images_for_email(html)
 
-        assert f'src="cid:{uid}@report"' in result_html
+        assert f'src="cid:{uid}@{CID_DOMAIN}"' in result_html
         assert f"img:{uid}" not in result_html
         assert uid in images
         assert images[uid] == ("image/png", raw)
@@ -1228,7 +1187,6 @@ class TestCollectImagesForEmail:
 
     @pytest.mark.asyncio
     async def test_deduplicated_uuids_fetched_once(self):
-        import base64
         from services.report_renderer import collect_images_for_email
 
         uid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"

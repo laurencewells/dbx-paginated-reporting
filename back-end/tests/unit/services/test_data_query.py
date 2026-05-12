@@ -210,7 +210,7 @@ class TestMapResultsToData:
     def test_empty_rows_returns_empty_list(self):
         svc = self._svc()
         result = svc._map_results_to_data([], [], _make_structure())
-        assert result == {"rows": []}
+        assert result == {"rows": [], "_first": {}}
 
 
 # ---------------------------------------------------------------------------

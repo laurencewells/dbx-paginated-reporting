@@ -123,6 +123,10 @@ watch(
 )
 
 
+// UI default for new templates is 'email' (PDF/A4 is experimental). The backend
+// model default in back-end/models/template.py is still 'A4' for back-compat with
+// existing rows — the watcher below syncs this ref from activeTemplate.page_size on load,
+// and createTemplate() explicitly passes page_size: 'email' for new templates.
 const currentPageSize = ref<'A4' | 'email'>('email')
 const currentTemplateType = ref<'html' | 'markdown'>('html')
 

@@ -19,11 +19,15 @@ import markdown2
 import vl_convert as vlc
 
 from common.connectors.sql import SQLConnector
+from common.email.base import CID_DOMAIN
 from common.logger import log as L
 from models.template import Template
 from repositories.structures import StructuresRepository
 from repositories.templates import TemplatesRepository
 from services.data_query import DataQueryService
+
+# Re-export so callers/tests can do `from services.report_renderer import CID_DOMAIN`.
+__all__ = ["CID_DOMAIN"]
 
 # Mirrors REPORT_STYLES in PreviewExportModal.vue — keep in sync.
 _REPORT_STYLES = """
@@ -499,6 +503,11 @@ def build_pdf_html_document(body: str, title: str, is_markdown: bool = False) ->
     Fragment bodies get wrapped with _PDF_STYLES (CSS 2.1, no flexbox/grid).
     """
     if _FULL_HTML_DOC_RE.match(body):
+        if is_markdown:
+            L.warning(
+                "[ReportRenderer] build_pdf_html_document: body is already a full HTML "
+                "document; is_markdown=True flag will not apply _MARKDOWN_STYLES."
+            )
         return body
 
     extra_styles = _MARKDOWN_STYLES if is_markdown else ""
@@ -512,14 +521,25 @@ def build_pdf_html_document(body: str, title: str, is_markdown: bool = False) ->
 
 
 def html_to_pdf_bytes(html: str) -> bytes:
-    """Convert an HTML string to PDF bytes using xhtml2pdf. Sync — wrap in asyncio.to_thread."""
+    """Convert an HTML string to PDF bytes using xhtml2pdf. Sync — wrap in asyncio.to_thread.
+
+    `result.err` counts non-fatal parser issues (unknown CSS properties, missing
+    fonts, unsupported attributes) — xhtml2pdf still produces a valid PDF in
+    nearly every such case. We only treat empty/invalid output as a failure;
+    everything else gets logged at WARNING and the PDF is returned.
+    """
     from xhtml2pdf import pisa
 
     buf = io.BytesIO()
     result = pisa.pisaDocument(io.StringIO(html), buf, encoding="utf-8")
-    if result.err:
-        raise RuntimeError(f"PDF generation failed with {result.err} error(s)")
-    return buf.getvalue()
+    pdf = buf.getvalue()
+    if not pdf.startswith(b"%PDF"):
+        raise RuntimeError(
+            f"PDF generation produced invalid output ({getattr(result, 'err', '?')} parser issue(s))"
+        )
+    if getattr(result, "err", 0):
+        L.warning(f"[ReportRenderer] xhtml2pdf reported {result.err} non-fatal issue(s)")
+    return pdf
 
 
 _IMAGE_SRC_RE = re.compile(
@@ -558,10 +578,9 @@ async def inline_images(html: str, pdf_mode: bool = False) -> str:
 
     uuids = {m.group(3) for m in _IMAGE_SRC_RE.finditer(html)}
     if not uuids:
-        L.debug("[ReportRenderer] inline_images: no img:UUID references found in HTML")
         return html
 
-    L.info(f"[ReportRenderer] inline_images: resolving {len(uuids)} image(s): {uuids}")
+    L.info(f"[ReportRenderer] inline_images: resolving {len(uuids)} image(s)")
     repo = ImagesRepository()
     data_map: dict[str, str] = {}
     for uid in uuids:
@@ -570,11 +589,11 @@ async def inline_images(html: str, pdf_mode: bool = False) -> str:
             if result:
                 mime_type, data_b64 = result
                 if pdf_mode and mime_type == "image/svg+xml":
-                    L.info(f"[ReportRenderer] Rasterising SVG image {uid} to PNG for PDF output")
+                    L.debug(f"[ReportRenderer] Rasterising SVG image {uid} to PNG for PDF output")
                     data_b64 = _svg_data_b64_to_png_data_b64(data_b64)
                     mime_type = "image/png"
                 data_map[uid] = f"data:{mime_type};base64,{data_b64}"
-                L.info(f"[ReportRenderer] Resolved image {uid} ({mime_type}, {len(data_b64)} chars b64)")
+                L.debug(f"[ReportRenderer] Resolved image {uid} ({mime_type})")
             else:
                 L.warning(f"[ReportRenderer] Image {uid} not found in database — will be absent from output")
         except Exception as e:
@@ -619,7 +638,7 @@ async def collect_images_for_email(html: str) -> tuple[str, dict[str, tuple[str,
 
     def _replace(m: re.Match) -> str:
         uid = m.group(3)
-        return f'{m.group(1)}cid:{uid}@report{m.group(4)}' if uid in image_map else m.group(0)
+        return f'{m.group(1)}cid:{uid}@{CID_DOMAIN}{m.group(4)}' if uid in image_map else m.group(0)
 
     return _IMAGE_SRC_RE.sub(_replace, html), image_map
 

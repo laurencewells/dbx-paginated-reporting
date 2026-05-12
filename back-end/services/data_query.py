@@ -108,13 +108,21 @@ class DataQueryService:
         for idx, row in enumerate(rows):
             row["_index"] = idx + 1
             row["_total"] = total
-            row["_even"] = (idx % 2 == 1)  # True for 2nd, 4th, 6th rows
+            # True when _index is even (2nd, 4th, ... rows) — useful for zebra striping.
+            row["_even"] = row["_index"] % 2 == 0
             enriched.append(row)
 
-        # _first exposes the first row's values at the top level so templates
-        # can reference scalar aggregates (e.g. {{#_first}}{{MaxReportedDate}}{{/_first}})
-        # without iterating all rows and repeating the value N times.
-        _first = {k: v for k, v in (enriched[0].items() if enriched else {}.items())
-                  if k not in ("_index", "_total", "_even")}
+        # _first exposes the first row's scalar values at the top level so templates
+        # can reference scalar aggregates (e.g. {{#_first}}{{report_date}}{{/_first}})
+        # without iterating all rows. Nested arrays/structs are excluded to keep
+        # the payload small and the contract obvious.
+        _first: Dict[str, Any] = {}
+        if enriched:
+            _first = {
+                k: v
+                for k, v in enriched[0].items()
+                if k not in ("_index", "_total", "_even")
+                and not isinstance(v, (list, dict))
+            }
 
         return {"rows": enriched, "_first": _first}

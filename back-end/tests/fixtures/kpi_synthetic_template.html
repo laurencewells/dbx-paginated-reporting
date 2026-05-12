@@ -1,0 +1,61 @@
+<div class="report-global-header">
+  <table style="width:100%;">
+    <tr>
+      <td style="width:80px;">
+        <img src="img:00000000-0000-0000-0000-000000000001" alt="Logo" style="height:36px;" />
+      </td>
+      <td style="text-align:right;">
+        <strong>Regional Performance Dashboard</strong>
+        {{#_first}}<div class="text-muted small">Period ending: {{report_date}}</div>{{/_first}}
+      </td>
+    </tr>
+  </table>
+</div>
+
+<div class="report-page">
+  <h1 class="fw-bold">KPI Summary</h1>
+
+  <div class="chart-container">
+    <div class="chart-title">Revenue by Region</div>
+    <div class="report-bar-chart"
+         data-labels="{{#rows}}{{#metric_name}}{{region}},{{/metric_name}}{{/rows}}"
+         data-values="{{#rows}}{{#metric_name}}{{current_value_raw}},{{/metric_name}}{{/rows}}">
+    </div>
+  </div>
+
+  <table class="report-table">
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th>Current</th>
+        <th>Target</th>
+        <th>vs Target</th>
+        <th>Prior</th>
+        <th>vs Prior</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#rows}}
+        {{^metric_name}}
+          <tr class="section-header">
+            <td colspan="6"><strong>{{section}}</strong></td>
+          </tr>
+        {{/metric_name}}
+        {{#metric_name}}
+          <tr>
+            <td>{{metric_name}}</td>
+            <td>{{current_value}}</td>
+            <td>{{target_value}}</td>
+            <td class="{{vs_target_color}}">{{vs_target_pct}}</td>
+            <td>{{prior_value}}</td>
+            <td class="{{vs_prior_color}}">{{vs_prior_pct}}</td>
+          </tr>
+        {{/metric_name}}
+      {{/rows}}
+    </tbody>
+  </table>
+</div>
+
+<div class="report-global-footer">
+  <span>Synthetic test fixture — not real data</span>
+</div>

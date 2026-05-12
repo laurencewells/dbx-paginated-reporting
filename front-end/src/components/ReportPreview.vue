@@ -47,15 +47,26 @@ const headStyleEl = document.createElement('style')
 headStyleEl.setAttribute('data-report-preview', '')
 document.head.appendChild(headStyleEl)
 
+// Feature-detect @scope: Chrome 118+ / Safari 17.4+ support it; Firefox does not (as of 2026-05).
+// Without the feature, the entire @scope rule is silently dropped — falling back to
+// unscoped CSS preserves the preview at the cost of potentially bleeding template styles
+// (e.g. body { font-size: 10px }) into the host app UI. Acceptable trade-off vs. an empty preview.
+const _SUPPORTS_SCOPE = typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
+  && CSS.supports('selector(:scope)') && CSS.supports('(:scope)')
+
 watchEffect(() => {
   const blocks: string[] = []
   const re = /<style[^>]*>([\s\S]*?)<\/style>/gi
   let m: RegExpExecArray | null
   while ((m = re.exec(props.html)) !== null) blocks.push(m[1])
   const css = sanitizeCss(blocks.join('\n'))
-  // @scope limits the injected rules to inside .report-preview-wrapper so
-  // template styles (e.g. html { font-size: 10px }) don't bleed into the app UI.
-  headStyleEl.textContent = css ? `@scope (.report-preview-wrapper) {\n${css}\n}` : ''
+  if (!css) {
+    headStyleEl.textContent = ''
+    return
+  }
+  headStyleEl.textContent = _SUPPORTS_SCOPE
+    ? `@scope (.report-preview-wrapper) {\n${css}\n}`
+    : css
 })
 
 const previewContainer = ref<HTMLElement | null>(null)
