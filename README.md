@@ -56,16 +56,23 @@ This application enables users to:
 ### Prerequisites
 
 - Node.js 18+, npm 9+
-- Python 3.11+
+- Python 3.13+
+- [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - Databricks workspace with configured environment variables
 
 ### Back-End
 
 ```bash
 cd back-end
-pip install -e .
-fastapi dev app.py   # dev server on :8000
+uv sync                          # creates .venv and installs pinned deps
+uv run fastapi dev app.py        # dev server on :8000
 ```
+
+Dependencies are managed via `pyproject.toml`. Every package — direct and
+transitive — is pinned to an exact version as a supply-chain hardening measure.
+The `uv.lock` file is not committed; `uv sync` installs directly from the pins
+in `pyproject.toml`. To upgrade a package, edit its pin in `pyproject.toml` and
+re-run `uv sync`.
 
 ### Front-End
 

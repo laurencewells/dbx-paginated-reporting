@@ -101,62 +101,50 @@ This template is set to **Email** format. It will be delivered as an inline HTML
 _PDF_RENDERING_CONSTRAINTS = """
 ## Rendering Constraints — PDF format (Experimental)
 
-This template is set to **PDF** format. Scheduled deliveries attach a PDF generated server-side by **xhtml2pdf**, a pure-Python renderer that supports **CSS 2.1 only**.
+This template is set to **PDF** format. Scheduled deliveries attach a PDF generated server-side by **xhtml2pdf 0.2.17**, a pure-Python renderer built on ReportLab. It supports **CSS 2.1 plus a small subset of CSS3** — no modern layout features (flex, grid), no visual effects (shadows, gradients, transforms), no modern units (`vh`, `vw`, `clamp()`), no CSS custom properties (`--var`, `var()`).
 
-**xhtml2pdf does NOT support — avoid these in templates:**
-- `display: flex` / `display: grid` — multi-column Bootstrap `.row`/`.col-*` layouts and `report-grid-*` will stack vertically, not side by side.
+**Does NOT work — avoid these in PDF templates:**
+- `display: flex` / `display: grid` — Bootstrap `.row`/`.col-*` and `report-grid-*` will stack vertically instead of side-by-side.
 - `gap`, `column-gap`, `row-gap`
-- `background: linear-gradient(...)` — use solid `background-color` instead.
-- `box-shadow`, `filter`, `border-radius` (silently ignored)
-- CSS `column-count` (`.report-columns-*` classes won't split into columns)
-- `break-after`/`break-before` — use `page-break-after`/`page-break-before` (CSS 2.1 equivalents)
+- `box-shadow`, `text-shadow`, `filter`, `clip-path`, `mask`
+- `linear-gradient(...)`, `radial-gradient(...)` — use solid `background-color`.
+- `transform`, `transition`, `animation`
+- CSS `column-count`, `column-gap` (so `.report-columns-*` won't split into columns)
+- `break-after` / `break-before` — use `page-break-after` / `page-break-before` instead.
+- Modern units: `vh`, `vw`, `vmin`, `vmax`, `clamp()`, `min()`, `max()` — use `mm`, `cm`, `in`, `pt`, `px`, `%`.
+- CSS custom properties: `--name: value` and `var(--name)` — hard-code the value.
+- Advanced selectors: `:nth-child()`, `:not()`, complex attribute selectors. Stick to type, class, id, descendant, child (`>`), `:first-child`, `:last-child`.
+- `object-fit` on images — set explicit `width`/`height` on the `<img>` instead.
 
-**What DOES work well:**
-- `<table>` layouts — use tables for any multi-column arrangement.
-- `page-break-after: always` on `.report-page` divs.
-- `page-break-inside: avoid` on `.no-break` blocks.
-- `@page { size: A4; margin: 10mm; }` page sizing.
-- Solid colours, borders, padding, margins, font styling.
-- Charts are rendered as PNG images before PDF generation — they look identical to the browser preview.
-- Images are embedded as base64 data URIs — no external requests needed.
+**Works WELL — the CSS3 features you can rely on:**
+- `@page { size: A4; margin: 10mm; }` — page size, orientation, margins (CSS3 paged media).
+- `page-break-before: always`, `page-break-after: always`, `page-break-inside: avoid`.
+- `@font-face` with TTF/OTF custom fonts (WOFF2 not supported).
+- `border-radius` — basic rounded corners on blocks and tables (not on images or complex nested borders).
+- RGBA and `opacity` — works reliably for fills and text colour; less reliable on borders.
+- `background-color`, `background-image` (raster only), `background-repeat`, `background-position`.
+- Full box model: `margin`, `padding`, `border`, `width`, `height`, `min/max-width`, `min/max-height`.
+- `display: block | inline | inline-block | table | table-row | table-cell | none`.
+- `float: left | right`, `clear`.
+- Typography: `font-family`, `font-size`, `font-weight`, `font-style`, `line-height`, `letter-spacing`, `word-spacing`, `text-align`, `text-decoration`, `text-transform`, `vertical-align`.
+- Lists: `list-style-type`, `list-style-image`, `list-style-position`.
+- `position: absolute | relative` (works but fragile — best used for small overlays like badges/watermarks).
+
+**Charts and images are pre-rendered:**
+- Charts are converted to PNG before PDF generation — they look identical to the browser preview.
+- Images are embedded as base64 data URIs — no external requests needed at PDF generation time.
 
 **Design guidance for PDF templates:**
-- Use `<table>` with explicit `width` attributes for side-by-side column layouts.
-- Keep layouts single-column where possible for the most reliable output.
-- Test with simple HTML first; add complexity incrementally and check the PDF export each time.
+- **Use `<table>` for any side-by-side layout** with explicit `width` attributes (e.g. `<table width="100%"><tr><td width="50%">...</td><td width="50%">...</td></tr></table>`). Tables are the most reliable layout primitive.
+- Keep templates single-column where possible.
+- Use Bootstrap utility classes for typography/colour/padding/margin (they compile to standard CSS that xhtml2pdf understands).
+- Test the PDF export early and often — add complexity incrementally.
 """
 
 
-def build_report_agent_prompt(structure: Structure, template: Template) -> str:
-    """Return a system prompt tailored to the current template, structure, and page_size."""
-    rendering_constraints = (
-        _PDF_RENDERING_CONSTRAINTS if template.page_size == "A4"
-        else _EMAIL_RENDERING_CONSTRAINTS
-    )
-    if template.template_type == "markdown":
-        return _build_markdown_prompt(structure, template, rendering_constraints)
-    return _build_html_prompt(structure, template, rendering_constraints)
+_MULTI_COLUMN_GRID = """## Multi-column Layouts — Use report-grid-* (not Bootstrap col-*)
 
-
-def _build_html_prompt(structure: Structure, template: Template, rendering_constraints: str = "") -> str:
-    return f"""You are an expert report-building assistant for a paginated reporting application.
-You help users write Mustache HTML templates for data-driven reports.
-{_MUSTACHE_REFERENCE}
-## Styling — Bootstrap 5 + Report Grid
-
-Bootstrap 5 is fully loaded. **Always prefer Bootstrap utility classes** over custom CSS:
-
-- Spacing: `p-*`, `m-*`, `px-*`, `py-*`, `mb-*`, `mt-*`
-- Typography: `fw-bold`, `fw-semibold`, `text-muted`, `text-uppercase`, `fs-*`, `small`
-- Colour: `text-primary/success/warning/danger`, `bg-primary/secondary`, `bg-opacity-*`
-- Flex: `d-flex`, `gap-*`, `align-items-*`, `justify-content-*`
-- Components: `card`, `card-body`, `badge`, `table`, `table-striped`, `border`, `rounded`
-
-Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradients, custom keyframes).
-
-## Multi-column Layouts — Use report-grid-* (not Bootstrap col-*)
-
-**Always use `report-grid-*` classes for side-by-side column layouts.** Bootstrap's `col-md-*` grid uses responsive media queries that break in PDF export. `report-grid-*` uses CSS Grid with no breakpoints and works identically in browser preview, PDF export, and email delivery.
+**Always use `report-grid-*` classes for side-by-side column layouts.** Bootstrap's `col-md-*` grid uses responsive media queries that break in PDF export. `report-grid-*` uses CSS Grid with no breakpoints and works identically in browser preview and email delivery.
 
 | Class | Columns |
 |-------|---------|
@@ -184,7 +172,75 @@ Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradi
 ```
 
 Only fall back to `row`/`col-*` if the user explicitly asks for Bootstrap grid classes.
+"""
 
+_MULTI_COLUMN_PDF_TABLES = """## Multi-column Layouts — Use HTML tables (PDF format)
+
+This template is set to **PDF** format. xhtml2pdf does not support CSS Grid or flexbox, so `report-grid-*`, Bootstrap `.row`/`.col-*`, and any `display: flex|grid` will stack vertically. **Use `<table>` with explicit `width` attributes for any side-by-side layout** — it is the only reliable layout primitive in PDF.
+
+```html
+<!-- 2 equal columns -->
+<table width="100%">
+  <tr>
+    <td width="50%" valign="top"><!-- col 1 --></td>
+    <td width="50%" valign="top"><!-- col 2 --></td>
+  </tr>
+</table>
+
+<!-- 3 equal columns -->
+<table width="100%">
+  <tr>
+    <td width="33%" valign="top"><!-- col 1 --></td>
+    <td width="33%" valign="top"><!-- col 2 --></td>
+    <td width="34%" valign="top"><!-- col 3 --></td>
+  </tr>
+</table>
+
+<!-- sidebar + main content (1:3) -->
+<table width="100%">
+  <tr>
+    <td width="25%" valign="top"><!-- sidebar --></td>
+    <td width="75%" valign="top"><!-- main --></td>
+  </tr>
+</table>
+```
+
+Tip: add `style="padding: 0 8px;"` on `<td>` cells if you need a gap between columns.
+"""
+
+
+def build_report_agent_prompt(structure: Structure, template: Template) -> str:
+    """Return a system prompt tailored to the current template, structure, and page_size."""
+    is_pdf = template.page_size == "A4"
+    rendering_constraints = _PDF_RENDERING_CONSTRAINTS if is_pdf else _EMAIL_RENDERING_CONSTRAINTS
+    multi_column_section = _MULTI_COLUMN_PDF_TABLES if is_pdf else _MULTI_COLUMN_GRID
+    if template.template_type == "markdown":
+        return _build_markdown_prompt(structure, template, rendering_constraints)
+    return _build_html_prompt(structure, template, rendering_constraints, multi_column_section)
+
+
+def _build_html_prompt(
+    structure: Structure,
+    template: Template,
+    rendering_constraints: str = "",
+    multi_column_section: str = _MULTI_COLUMN_GRID,
+) -> str:
+    return f"""You are an expert report-building assistant for a paginated reporting application.
+You help users write Mustache HTML templates for data-driven reports.
+{_MUSTACHE_REFERENCE}
+## Styling — Bootstrap 5 + Report Grid
+
+Bootstrap 5 is fully loaded. **Always prefer Bootstrap utility classes** over custom CSS:
+
+- Spacing: `p-*`, `m-*`, `px-*`, `py-*`, `mb-*`, `mt-*`
+- Typography: `fw-bold`, `fw-semibold`, `text-muted`, `text-uppercase`, `fs-*`, `small`
+- Colour: `text-primary/success/warning/danger`, `bg-primary/secondary`, `bg-opacity-*`
+- Flex: `d-flex`, `gap-*`, `align-items-*`, `justify-content-*`
+- Components: `card`, `card-body`, `badge`, `table`, `table-striped`, `border`, `rounded`
+
+Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradients, custom keyframes).
+
+{multi_column_section}
 ## Report-Specific Component Classes
 
 - **Pages**: `<div class="report-page">` — A4 page wrapper
