@@ -7,7 +7,6 @@ Fixtures live in back-end/tests/fixtures/ — fully synthetic, no customer data.
 from __future__ import annotations
 
 import base64
-import importlib.util
 import struct
 import uuid
 import zlib
@@ -23,12 +22,6 @@ from tests.fixtures.synthetic_data import (
     SUPPLIER_ROWS,
     SUPPLIER_TEMPLATE,
     kpi_context_with_first,
-)
-
-_XHTML2PDF_AVAILABLE = importlib.util.find_spec("xhtml2pdf") is not None
-requires_xhtml2pdf = pytest.mark.skipif(
-    not _XHTML2PDF_AVAILABLE,
-    reason="xhtml2pdf not installed (reportlab<4 fails to build on Python 3.13+)",
 )
 
 from models.structure import Structure, StructureTable
@@ -495,7 +488,6 @@ class TestBuildPdfHtmlDocument:
 # ---------------------------------------------------------------------------
 
 
-@requires_xhtml2pdf
 class TestHtmlToPdfBytes:
     def test_simple_html_produces_valid_pdf(self):
         from services.report_renderer import html_to_pdf_bytes, build_pdf_html_document
@@ -535,7 +527,7 @@ class TestHtmlToPdfBytes:
         fake_result = MagicMock()
         fake_result.err = 5  # parser logged 5 non-fatal issues
 
-        def fake_pisa_document(src, dest, encoding):
+        def fake_pisa_document(src, dest, encoding, link_callback=None):
             dest.write(b'%PDF-1.4\n%fake pdf content\n')
             return fake_result
 
@@ -552,7 +544,7 @@ class TestHtmlToPdfBytes:
         fake_result = MagicMock()
         fake_result.err = 1
 
-        def fake_pisa_document(src, dest, encoding):
+        def fake_pisa_document(src, dest, encoding, link_callback=None):
             return fake_result  # writes nothing
 
         with patch("xhtml2pdf.pisa.pisaDocument", side_effect=fake_pisa_document):
@@ -586,7 +578,6 @@ class TestPdfPipelineSupplierTemplate:
         assert "ACME Corp" in rendered
         assert "Global Trade Ltd" in rendered
 
-    @requires_xhtml2pdf
     @pytest.mark.asyncio
     async def test_full_pipeline_produces_valid_pdf(self):
         import chevron
@@ -634,7 +625,6 @@ class TestPdfPipelineSupplierTemplate:
 
 
 class TestPdfPipelineKpiTemplate:
-    @requires_xhtml2pdf
     @pytest.mark.asyncio
     async def test_full_pipeline_produces_valid_pdf(self):
         import chevron
@@ -678,7 +668,6 @@ class TestPdfPipelineKpiTemplate:
         assert f"img:{LOGO_UUID}" not in result
         assert "data:image/png;base64," in result
 
-    @requires_xhtml2pdf
     @pytest.mark.asyncio
     async def test_logo_image_survives_to_pdf(self):
         """PDF with resolved image must be larger — fails if xhtml2pdf drops data: URIs."""

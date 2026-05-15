@@ -34,6 +34,8 @@ variables:
     description: "Configuration for paginated-reports"
     default:
       command:
+        - "uv"
+        - "run"
         - "uvicorn"
         - "app:app"
         - "--host"
