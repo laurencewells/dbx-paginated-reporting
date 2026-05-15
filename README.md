@@ -64,13 +64,15 @@ This application enables users to:
 
 ```bash
 cd back-end
-uv sync                          # creates .venv and installs locked deps
+uv sync                          # creates .venv and installs pinned deps
 uv run fastapi dev app.py        # dev server on :8000
 ```
 
-Dependencies are managed via `pyproject.toml` and `uv.lock`. Every package — direct
-and transitive — is pinned to an exact version as a supply-chain hardening measure.
-To upgrade a package, edit the pin in `pyproject.toml`, then run `uv lock`.
+Dependencies are managed via `pyproject.toml`. Every package — direct and
+transitive — is pinned to an exact version as a supply-chain hardening measure.
+The `uv.lock` file is not committed; `uv sync` installs directly from the pins
+in `pyproject.toml`. To upgrade a package, edit its pin in `pyproject.toml` and
+re-run `uv sync`.
 
 ### Front-End
 

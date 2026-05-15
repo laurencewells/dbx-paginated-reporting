@@ -142,36 +142,9 @@ This template is set to **PDF** format. Scheduled deliveries attach a PDF genera
 """
 
 
-def build_report_agent_prompt(structure: Structure, template: Template) -> str:
-    """Return a system prompt tailored to the current template, structure, and page_size."""
-    rendering_constraints = (
-        _PDF_RENDERING_CONSTRAINTS if template.page_size == "A4"
-        else _EMAIL_RENDERING_CONSTRAINTS
-    )
-    if template.template_type == "markdown":
-        return _build_markdown_prompt(structure, template, rendering_constraints)
-    return _build_html_prompt(structure, template, rendering_constraints)
+_MULTI_COLUMN_GRID = """## Multi-column Layouts — Use report-grid-* (not Bootstrap col-*)
 
-
-def _build_html_prompt(structure: Structure, template: Template, rendering_constraints: str = "") -> str:
-    return f"""You are an expert report-building assistant for a paginated reporting application.
-You help users write Mustache HTML templates for data-driven reports.
-{_MUSTACHE_REFERENCE}
-## Styling — Bootstrap 5 + Report Grid
-
-Bootstrap 5 is fully loaded. **Always prefer Bootstrap utility classes** over custom CSS:
-
-- Spacing: `p-*`, `m-*`, `px-*`, `py-*`, `mb-*`, `mt-*`
-- Typography: `fw-bold`, `fw-semibold`, `text-muted`, `text-uppercase`, `fs-*`, `small`
-- Colour: `text-primary/success/warning/danger`, `bg-primary/secondary`, `bg-opacity-*`
-- Flex: `d-flex`, `gap-*`, `align-items-*`, `justify-content-*`
-- Components: `card`, `card-body`, `badge`, `table`, `table-striped`, `border`, `rounded`
-
-Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradients, custom keyframes).
-
-## Multi-column Layouts — Use report-grid-* (not Bootstrap col-*)
-
-**Always use `report-grid-*` classes for side-by-side column layouts.** Bootstrap's `col-md-*` grid uses responsive media queries that break in PDF export. `report-grid-*` uses CSS Grid with no breakpoints and works identically in browser preview, PDF export, and email delivery.
+**Always use `report-grid-*` classes for side-by-side column layouts.** Bootstrap's `col-md-*` grid uses responsive media queries that break in PDF export. `report-grid-*` uses CSS Grid with no breakpoints and works identically in browser preview and email delivery.
 
 | Class | Columns |
 |-------|---------|
@@ -199,7 +172,75 @@ Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradi
 ```
 
 Only fall back to `row`/`col-*` if the user explicitly asks for Bootstrap grid classes.
+"""
 
+_MULTI_COLUMN_PDF_TABLES = """## Multi-column Layouts — Use HTML tables (PDF format)
+
+This template is set to **PDF** format. xhtml2pdf does not support CSS Grid or flexbox, so `report-grid-*`, Bootstrap `.row`/`.col-*`, and any `display: flex|grid` will stack vertically. **Use `<table>` with explicit `width` attributes for any side-by-side layout** — it is the only reliable layout primitive in PDF.
+
+```html
+<!-- 2 equal columns -->
+<table width="100%">
+  <tr>
+    <td width="50%" valign="top"><!-- col 1 --></td>
+    <td width="50%" valign="top"><!-- col 2 --></td>
+  </tr>
+</table>
+
+<!-- 3 equal columns -->
+<table width="100%">
+  <tr>
+    <td width="33%" valign="top"><!-- col 1 --></td>
+    <td width="33%" valign="top"><!-- col 2 --></td>
+    <td width="34%" valign="top"><!-- col 3 --></td>
+  </tr>
+</table>
+
+<!-- sidebar + main content (1:3) -->
+<table width="100%">
+  <tr>
+    <td width="25%" valign="top"><!-- sidebar --></td>
+    <td width="75%" valign="top"><!-- main --></td>
+  </tr>
+</table>
+```
+
+Tip: add `style="padding: 0 8px;"` on `<td>` cells if you need a gap between columns.
+"""
+
+
+def build_report_agent_prompt(structure: Structure, template: Template) -> str:
+    """Return a system prompt tailored to the current template, structure, and page_size."""
+    is_pdf = template.page_size == "A4"
+    rendering_constraints = _PDF_RENDERING_CONSTRAINTS if is_pdf else _EMAIL_RENDERING_CONSTRAINTS
+    multi_column_section = _MULTI_COLUMN_PDF_TABLES if is_pdf else _MULTI_COLUMN_GRID
+    if template.template_type == "markdown":
+        return _build_markdown_prompt(structure, template, rendering_constraints)
+    return _build_html_prompt(structure, template, rendering_constraints, multi_column_section)
+
+
+def _build_html_prompt(
+    structure: Structure,
+    template: Template,
+    rendering_constraints: str = "",
+    multi_column_section: str = _MULTI_COLUMN_GRID,
+) -> str:
+    return f"""You are an expert report-building assistant for a paginated reporting application.
+You help users write Mustache HTML templates for data-driven reports.
+{_MUSTACHE_REFERENCE}
+## Styling — Bootstrap 5 + Report Grid
+
+Bootstrap 5 is fully loaded. **Always prefer Bootstrap utility classes** over custom CSS:
+
+- Spacing: `p-*`, `m-*`, `px-*`, `py-*`, `mb-*`, `mt-*`
+- Typography: `fw-bold`, `fw-semibold`, `text-muted`, `text-uppercase`, `fs-*`, `small`
+- Colour: `text-primary/success/warning/danger`, `bg-primary/secondary`, `bg-opacity-*`
+- Flex: `d-flex`, `gap-*`, `align-items-*`, `justify-content-*`
+- Components: `card`, `card-body`, `badge`, `table`, `table-striped`, `border`, `rounded`
+
+Only add a `<style>` block for things Bootstrap cannot do (e.g. multi-stop gradients, custom keyframes).
+
+{multi_column_section}
 ## Report-Specific Component Classes
 
 - **Pages**: `<div class="report-page">` — A4 page wrapper
