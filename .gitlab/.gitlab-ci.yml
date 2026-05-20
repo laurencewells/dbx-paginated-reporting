@@ -1,0 +1,395 @@
+# =============================================================================
+# GitLab CI/CD pipeline — Paginated Reporting (Databricks App)
+# -----------------------------------------------------------------------------
+# Thin consumer of the shared CI library in `bicmn_sandbox`. Mirrors the
+# structure used by access-matrix:
+#
+#   pre-commit → validate → build → deploy
+#
+#   pre-commit     — runs every hook in .pre-commit-config.yaml.
+#                    Auto-skipped when the config file is absent (current
+#                    state of this repo) so the pipeline still goes green.
+#   validate       — `databricks bundle validate` per target.
+#   build          — Vue front-end build (npm run build → back-end/static)
+#                    AND a Python back-end smoke test (py_compile sweep).
+#                    The front-end build also pre-flight-checks that the
+#                    Orval-generated TypeScript API client is committed
+#                    under front-end/src/api/generated/ (vue-tsc imports
+#                    from it — see README "Regenerate API Client").
+#   deploy         — `databricks bundle deploy` + `databricks bundle run`
+#                    of the Databricks App (paginated-reports).
+#                    A manual "stop staging app" button hangs off the
+#                    staging deploy.
+#
+# -----------------------------------------------------------------------------
+# Required project-level setup before the first run:
+#   * GitLab → bicmn_sandbox → Settings → CI/CD → Token Access:
+#     allow this project to read CI files from bicmn_sandbox.
+#   * Confirm the SPN paths near the bottom of this file exist in Vault.
+#   * Verify workspace.host in databricks.yml for paginated-stg /
+#     paginated-prd points at the right Azure Databricks workspaces.
+#
+# -----------------------------------------------------------------------------
+# One-time human steps NOT done by this pipeline (per README "Lakebase
+# Autoscaling Postgres Setup" + Step 6):
+#   1. After the first `bundle deploy`, create a Postgres role for the
+#      app service principal (DABs cannot do this automatically — the
+#      postgres app resource is bypassed in databricks.yml because the
+#      auto-generated DB id can't be predicted at bundle-author time).
+#      Run the snippet in README §"Create the Postgres role for the app
+#      service principal" once per target workspace.
+#   2. Grant the SMTP secret scope ACL to the app SP:
+#        databricks secrets put-acl paginated_reports_<env> <app-sp> MANAGE
+#      (see comment on `secret_scopes.paginated_reports_smtp_secrets` in
+#      databricks.yml). Subsequent CI deploys do NOT need this re-run.
+# =============================================================================
+
+stages:
+  - pre-commit
+  - validate
+  - build
+  - deploy
+
+default:
+  interruptible: true
+
+# -----------------------------------------------------------------------------
+# Shared values — defined once via YAML anchors, reused in every include block
+# below. Update here to bump the shared CI ref or any image version.
+# -----------------------------------------------------------------------------
+.anchors:
+  shared_repo: &shared_repo 'kaizengaming/projects/dna/bi/technology/bicmn_sandbox'
+  shared_ref:  &shared_ref  main      # pin to a tag (e.g. v1.2.0) for stability
+
+  # The databricks-cli image is a python:3.11-alpine base with the
+  # databricks CLI layered on top. Reused for every backend job so the
+  # runner only pulls one image per pipeline.
+  databricks_image: &databricks_image registry.kaizengaming.eu/de/databricks-cli:0.297.2-python3.11-alpine3.22
+  node_image:       &node_image       registry.kaizengaming.eu/de/node:20-alpine
+
+  stg_tags: &stg_tags [openshift]
+  prd_tags: &prd_tags [openshift-production]
+
+  # Paths that should trigger a pipeline run. Changes confined to docs,
+  # examples, or unrelated tooling files will skip the whole pipeline,
+  # saving CI minutes. Tag pipelines bypass this filter (see workflow
+  # rules below) so a release tag always rebuilds and redeploys.
+  build_trigger_paths: &build_trigger_paths
+    - front-end/**/*
+    - back-end/**/*
+    - databricks.yml
+    - .gitlab/**/*                # this CI file lives at .gitlab/.gitlab-ci.yml
+    - .pre-commit-config.yaml
+    - .hooks/**/*
+
+# Cancel redundant pipelines: run for MRs, default branch, and version tags
+# only — and only when the changeset actually touches a build-relevant path.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        paths: *build_trigger_paths
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: *build_trigger_paths
+    - if: '$CI_COMMIT_TAG'
+
+# =============================================================================
+# Imports from bicmn_sandbox
+# =============================================================================
+include:
+  # ---------------------------------------------------------------------------
+  # rules.yml — .basic-rules + .deploy-rules:development|staging|production
+  # ---------------------------------------------------------------------------
+  - project: *shared_repo
+    ref: *shared_ref
+    file: '/.gitlab/components/rules.yml'
+
+  # ---------------------------------------------------------------------------
+  # pre-commit — runs every hook in .pre-commit-config.yaml
+  # ---------------------------------------------------------------------------
+  - project: *shared_repo
+    ref: *shared_ref
+    file: '/.gitlab/components/pre-commit.yml'
+    inputs:
+      stage: pre-commit
+      tags: *stg_tags
+      pip_requirements: pyyaml==6.0.2
+
+  # ---------------------------------------------------------------------------
+  # build — Vue front-end → back-end/static/ (artifact consumed by deploy)
+  #
+  # `npm run build` runs `vue-tsc -b && vite build`. vue-tsc resolves imports
+  # from `src/api/generated/` — the Orval-generated TypeScript API client.
+  # Per README "Regenerate API Client", developers run `npm run generate-all`
+  # locally and commit the result; CI does not regenerate (the back-end is
+  # not running in this job). We pre-flight-check that the directory is
+  # populated so a missing client surfaces with a clear actionable message
+  # instead of a wall of TS2307 errors deep in vue-tsc output.
+  # ---------------------------------------------------------------------------
+  - project: *shared_repo
+    ref: *shared_ref
+    file: '/.gitlab/components/frontend-build.yml'
+    inputs:
+      stage: build
+      image: *node_image
+      tags: *stg_tags
+      frontend_dir: front-end
+      artifact_path: back-end/static
+      build_cmd: |
+        if [ ! -d src/api/generated ] || [ -z "$(ls -A src/api/generated 2>/dev/null)" ]; then
+          echo ""
+          echo "[ERROR] front-end/src/api/generated/ is missing or empty."
+          echo "        vue-tsc imports the Orval-generated API client from"
+          echo "        that path. Per README \"Regenerate API Client\":"
+          echo ""
+          echo "          cd front-end"
+          echo "          npm run generate-all   # needs back-end uvicorn on :8000"
+          echo ""
+          echo "        Then commit the generated tree and re-push."
+          exit 1
+        fi
+        npm run build
+
+  # ===========================================================================
+  # STAGING — target: paginated-stg
+  # ===========================================================================
+  - project: *shared_repo
+    ref: *shared_ref
+    file: '/.gitlab/components/bundle-validate.yml'
+    inputs:
+      stage: validate
+      image: *databricks_image
+      tags: *stg_tags
+      target: paginated-stg
+
+  - project: *shared_repo
+    ref: *shared_ref
+    file: '/.gitlab/components/bundle-deploy.yml'
+    inputs:
+      stage: deploy
+      image: *databricks_image
+      tags: *stg_tags
+      target: paginated-stg
+      app_name: paginated-reports
+      run_after_deploy: "true"
+      requires_artifact_path: back-end/static
+      force_lock: "true"
+      # CI has no TTY; bundle deploy must not block on the destructive-action
+      # confirmation prompt. Review `databricks bundle validate -t paginated-stg`
+      # locally before merging if the plan shows resource recreations.
+      auto_approve: "true"
+
+  # ---------------------------------------------------------------------------
+  # Optional manual "stop the staging app" button.
+  # Generates job "app-stop:paginated-stg"; job-level rules below make it
+  # `when: manual` + `allow_failure: true`, so the pipeline stays green
+  # whether the user clicks it or not.
+  # ---------------------------------------------------------------------------
+  - project: *shared_repo
+    ref: *shared_ref
+    file: '/.gitlab/components/app-stop.yml'
+    inputs:
+      stage: deploy
+      image: *databricks_image
+      tags: *stg_tags
+      target: paginated-stg
+      app_name: paginated-reports   # runtime name; same as bundle key here
+
+  # ===========================================================================
+  # PRODUCTION — target: paginated-prd  (manual gate enforced by .deploy-rules)
+  # ===========================================================================
+  - project: *shared_repo
+    ref: *shared_ref
+    file: '/.gitlab/components/bundle-validate.yml'
+    inputs:
+      stage: validate
+      image: *databricks_image
+      tags: *prd_tags
+      target: paginated-prd
+
+  - project: *shared_repo
+    ref: *shared_ref
+    file: '/.gitlab/components/bundle-deploy.yml'
+    inputs:
+      stage: deploy
+      image: *databricks_image
+      tags: *prd_tags
+      target: paginated-prd
+      app_name: paginated-reports
+      run_after_deploy: "true"
+      requires_artifact_path: back-end/static
+      force_lock: "true"
+      auto_approve: "true"
+
+# -----------------------------------------------------------------------------
+# Vault → Azure SPN secret injection per target.
+# The Databricks CLI auto-detects ARM_TENANT_ID / ARM_CLIENT_ID /
+# ARM_CLIENT_SECRET and authenticates to Azure AD as a service principal.
+# Each `.secrets:<target>` block is attached to its validate + deploy + stop
+# jobs via `extends:` below.
+# -----------------------------------------------------------------------------
+".secrets:paginated-stg":
+  secrets:
+    ARM_TENANT_ID:
+      vault: stg/common/az_stg_tenant_id@bigdata
+      file: false
+    ARM_CLIENT_ID:
+      vault: stg/bicmn/spn-dtbr-automation-stg-paginated-reports-id@bigdata
+      file: false
+    ARM_CLIENT_SECRET:
+      vault: stg/bicmn/spn-dtbr-automation-stg-paginated-reports-secret@bigdata
+      file: false
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: ${CI_SERVER_URL}
+  variables:
+    VAULT_AUTH_ROLE: bigdata
+    VAULT_SERVER_URL: https://staging-vault.kaizengaming.eu:8200
+
+".secrets:paginated-prd":
+  secrets:
+    ARM_TENANT_ID:
+      vault: prd/common/az_prd_tenant_id@bigdata
+      file: false
+    ARM_CLIENT_ID:
+      vault: prd/bicmn/spn-dtbr-automation-prd-paginated-reports-id@bigdata
+      file: false
+    ARM_CLIENT_SECRET:
+      vault: prd/bicmn/spn-dtbr-automation-prd-paginated-reports-secret@bigdata
+      file: false
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: ${CI_SERVER_URL}
+  variables:
+    VAULT_AUTH_ROLE: bigdata
+    VAULT_SERVER_URL: https://vault.kaizengaming.eu:8200
+
+# -----------------------------------------------------------------------------
+# Job-level overrides — wire each generated job to the right environment,
+# deploy-rules gate, and secret block.
+# -----------------------------------------------------------------------------
+# Pre-commit only runs on merge-request pipelines (matches bicmn_sandbox),
+# AND only when `.pre-commit-config.yaml` exists at the repo root. This repo
+# does not ship a pre-commit config today, so the job is auto-skipped; the
+# moment one is added the job lights up without any further CI change.
+pre-commit:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      exists:
+        - .pre-commit-config.yaml
+
+# -----------------------------------------------------------------------------
+# Build-stage smoke test for the back-end FastAPI app.
+# -----------------------------------------------------------------------------
+# Lightweight equivalent of the start-and-curl-/healthz check we do for the
+# access-matrix dummy app. Per README "Back-End", a full local check would
+# be `pip install -e .` (pyproject.toml) or `pip install -r requirements.txt`
+# followed by `fastapi dev app.py`. We deliberately do neither in CI:
+#
+#   * requirements.txt pulls databricks-sql-connector[pyarrow], asyncpg,
+#     reportlab/xhtml2pdf and altair[save] — every one of those needs
+#     compiled wheels that are slow and brittle on the alpine runner
+#     image we use everywhere else (databricks-cli:0.297.2-…-alpine3.22).
+#   * Importing app.py at runtime triggers AppFactory().create_app(), which
+#     is fine for import-time but the FastAPI lifespan attempts to talk to
+#     Lakebase on startup — the CI runner has no SP creds for that.
+#
+# Instead we do a recursive py_compile sweep over the back-end source. This
+# catches syntax errors, missing colons, unmatched brackets, bad indent —
+# everything the Python tokenizer/parser can detect — before we pay for the
+# front-end build and bundle deploy. It is NOT a substitute for a unit-test
+# job; when one is added it should run alongside this sweep.
+#
+# Wired as a `needs:` on bundle-deploy:paginated-stg below, so a broken
+# back-end blocks the deploy.
+"app-build:paginated-reports":
+  stage: build
+  image: *databricks_image
+  tags: *stg_tags
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - set -eux
+    - cd back-end
+    - python -V
+    # Skip vendored deps (third-party) and tests (pulled in by pytest with
+    # their own dep stack) — just validate first-party source compiles.
+    - |
+      python - <<'PY'
+      import compileall, sys
+      ok = compileall.compile_dir(
+          ".", maxlevels=20, quiet=1, force=True,
+          rx=__import__("re").compile(r"(/|^)(vendor|tests)(/|$)"),
+      )
+      if not ok:
+          sys.exit("[app-build] py_compile sweep found syntax errors")
+      print("[app-build] all back-end Python files compile OK")
+      PY
+
+# STAGING — runs on MR + default branch (staging rules).
+"bundle-validate:paginated-stg":
+  environment:
+    name: staging
+    action: verify
+  extends:
+    - ".deploy-rules:staging"
+    - ".secrets:paginated-stg"
+
+"bundle-deploy:paginated-stg":
+  environment:
+    name: staging
+  needs:
+    - job: "bundle-validate:paginated-stg"
+    - job: "frontend:build"
+      artifacts: true                   # pulls back-end/static/ into this job
+    - job: "app-build:paginated-reports"   # block deploy if back-end is broken
+  extends:
+    - ".deploy-rules:staging"
+    - ".secrets:paginated-stg"
+
+# Manual "stop the staging app" button. Sits in the pipeline graph as a play
+# button next to the staging deploy. `allow_failure: true` keeps the
+# pipeline green whether the user clicks it or not. Use this to release the
+# staging app's compute (without removing the bundle resource) when a test
+# is done.
+"app-stop:paginated-stg":
+  needs:
+    - job: "bundle-deploy:paginated-stg"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: true
+  extends:
+    - ".secrets:paginated-stg"
+
+# PRODUCTION — default branch (or tag) only, per .deploy-rules:production.
+# bundle-deploy:paginated-prd additionally `needs:` the staging deploy so
+# prod can never run if staging is broken.
+"bundle-validate:paginated-prd":
+  environment:
+    name: production
+    action: verify
+  extends:
+    - ".deploy-rules:production"
+    - ".secrets:paginated-prd"
+
+"bundle-deploy:paginated-prd":
+  environment:
+    name: production
+  needs:
+    - job: "bundle-validate:paginated-prd"
+    - job: "frontend:build"
+      artifacts: true
+    - job: "app-build:paginated-reports"
+    - job: "bundle-deploy:paginated-stg"
+  extends:
+    - ".deploy-rules:production"
+    - ".secrets:paginated-prd"
